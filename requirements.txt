@@ -1,7 +1,5 @@
 streamlit
 pandas
 plotly
-numpy
 openpyxl
 yfinance
-xlrd
