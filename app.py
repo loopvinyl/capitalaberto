@@ -1,5 +1,5 @@
 # ==============================================================
-# 📊 DASHBOARD CVM - Indicadores Financeiros (VERSÃO COMPLETA COM ANÁLISES AVANÇADAS)
+# 📊 Indicadores Financeiros 
 # ==============================================================
 import streamlit as st
 import pandas as pd
@@ -111,7 +111,7 @@ def formatar_dataframe_percentual(df, colunas):
 # CONFIGURAÇÕES INICIAIS
 # ==============================
 st.set_page_config(page_title="Dashboard CVM - Indicadores", layout="wide")
-st.title("Dashboard CVM: Análise das Demonstrações Financeiras")
+st.title("Dashboard Análise das Demonstrações Financeiras")
 
 # ==============================
 # LEITURA DE DADOS
