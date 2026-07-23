@@ -120,9 +120,9 @@ st.title("Análise das Demonstrações Financeiras")
 def load_data():
     # Procurar automaticamente o arquivo em locais possíveis
     possible_paths = [
-        "/content/dff_2010_2024.xlsx",   # Google Colab
-        "dff_2010_2024.xlsx",            # mesma pasta do app
-        "./data/dff_2010_2024.xlsx"      # subpasta data/
+        "/content/dff_2010_2025.xlsx",   # Google Colab
+        "dff_2010_2025.xlsx",            # mesma pasta do app
+        "./data/dff_2010_2025.xlsx"      # subpasta data/
     ]
     data_path = None
     for path in possible_paths:
@@ -132,9 +132,9 @@ def load_data():
 
     if data_path is None:
         st.error(
-            "❌ Arquivo 'dff_2010_2024.xlsx' não encontrado.\n\n"
+            "❌ Arquivo 'dff_2010_2025.xlsx' não encontrado.\n\n"
             "Coloque o arquivo na mesma pasta do app ou em /content/ (se estiver no Colab),\n"
-            "ou salve em ./data/dff_2010_2024.xlsx.\n\n"
+            "ou salve em ./data/dff_2010_2025.xlsx.\n\n"
             "Caminhos verificados:\n- " + "\n- ".join(possible_paths)
         )
         st.stop()
@@ -144,7 +144,7 @@ def load_data():
     df.columns = [c.strip() for c in df.columns]
 
     # =============================================================
-    # MAPEAMENTO EXATO DAS CONTAS (compatível com dff_2010_2024)
+    # MAPEAMENTO EXATO DAS CONTAS (compatível com dff_2010_2025)
     # =============================================================
     # Ordenar por Ticker e Ano para garantir que shift() funcione corretamente
     df = df.sort_values(['Ticker', 'Ano']).reset_index(drop=True)
@@ -844,7 +844,7 @@ elif modo_analise == "📈 Visão por Empresa":
                                 # CORREÇÃO: Converter de R$ mil para R$ normais (multiplicar por 1000)
                                 valor_empresa_reais = valor_empresa * 1000
                                 
-                                # Buscar número de ações (apenas para ano mais recente - 2024)
+                                # Buscar número de ações (apenas para ano mais recente - 2025)
                                 numero_acoes = None
                                 if 'Numero_Acoes' in df_filtrado.columns and pd.notna(df_filtrado['Numero_Acoes'].iloc[0]):
                                     numero_acoes = df_filtrado['Numero_Acoes'].iloc[0]
@@ -928,7 +928,7 @@ elif modo_analise == "📈 Visão por Empresa":
                                         st.metric(
                                             "Número de Ações*",
                                             "Não disponível",
-                                            help="Dados de número de ações só disponíveis para 2024"
+                                            help="Dados de número de ações só disponíveis para 2025"
                                         )
                                 
                                 with col_val4:
@@ -1904,11 +1904,11 @@ with st.sidebar.expander("💡 Teste Livro utilizado: Análise das Demonstraçõ
     - **COMPARAÇÃO:** Caixa Operacional vs Lucro Líquido para análise de qualidade do lucro
     - **EVOLUÇÃO TEMPORAL:** Gráficos de fluxo de caixa na análise histórica
 
-    **Dataset: dff_2010_2024**
-    - Período: 2010-2024 (15 anos)
+    **Dataset: dff_2010_2025**
+    - Período: 2010-2025 (16 anos)
     - Empresas: 253 únicas
     - Tickers: 317 únicos
     - Setores: 43 categorias
     - **ESCALA DOS VALORES NO DATASET:** R$ mil
-    - **NÚMERO DE AÇÕES:** Disponível apenas para 2024
+    - **NÚMERO DE AÇÕES:** Disponível apenas para 2025
     """)
