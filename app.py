@@ -120,9 +120,9 @@ st.title("Análise das Demonstrações Financeiras")
 def load_data():
     # Procurar automaticamente o arquivo em locais possíveis
     possible_paths = [
-        "/content/dff_2010_2024.xlsx",   # Google Colab
-        "dff_2010_2024.xlsx",            # mesma pasta do app
-        "./data/dff_2010_2024.xlsx"      # subpasta data/
+        "/content/dff_2010_2025.xlsx",   # Google Colab
+        "dff_2010_2025.xlsx",            # mesma pasta do app
+        "./data/dff_2010_2025.xlsx"      # subpasta data/
     ]
     data_path = None
     for path in possible_paths:
