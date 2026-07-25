@@ -151,8 +151,6 @@ def calcular_estatisticas_dividendos(df_dividendos):
         'data_ultimo': df_dividendos.iloc[-1]['Data'] if len(df_dividendos) > 0 else None
     }
 
-@st.cache_data(ttl=86400)
-@st.cache_data(ttl=86400)
 def calcular_tickers_consistentes(df_cvm, anos_verificar=5, minimo_anos_com_pagamento=3):
     """
     Usa os dados da DFC (coluna 'Pagamento de Dividendos') para identificar
@@ -192,20 +190,31 @@ def calcular_tickers_consistentes(df_cvm, anos_verificar=5, minimo_anos_com_paga
     st.success(f"✅ {len(tickers_consistentes)} tickers com pagamento consistente (≥ {minimo_anos_com_pagamento} anos nos últimos {anos_verificar}).")
     return tickers_consistentes
 
-@st.cache_data(ttl=86400)
-@st.cache_data(ttl=86400)
-def calcular_ranking_dividendos(tickers_consistentes, periodo_dy_anos=10):
+def calcular_ranking_dividendos(tickers_consistentes, df_cvm, periodo_dy_anos=10):
+    """
+    Calcula o DY médio para os tickers consistentes.
+    O setor é extraído do próprio dataset (SETOR_ATIV), não do Yahoo.
+    """
     dados_ranking = []
     if not tickers_consistentes:
         return pd.DataFrame()
+    
+    # Criar mapa de setores a partir do dataset (pegar o setor mais recente disponível)
+    # Pegar o ano mais recente no dataset
+    ano_recente = df_cvm['Ano'].max()
+    setor_map = df_cvm[df_cvm['Ano'] == ano_recente][['Ticker', 'SETOR_ATIV']].drop_duplicates(subset=['Ticker'])
+    setor_map = setor_map.set_index('Ticker')['SETOR_ATIV'].to_dict()
+    
     st.warning(f"⚠️ Calculando DY médio de {periodo_dy_anos} anos para {len(tickers_consistentes)} tickers.")
     progress_bar = st.progress(0, text="Buscando dados de mercado...")
+    
     for i, ticker in enumerate(tickers_consistentes):
         dados_cotacao = buscar_cotacao_atual(ticker)
         data_inicio = datetime.now() - timedelta(days=365 * periodo_dy_anos)
         df_precos = buscar_historico_precos(ticker, "max")
         df_div = buscar_dividendos_historicos(ticker)
         dy_medio = None
+        
         if dados_cotacao and df_precos is not None and df_div is not None and not df_div.empty:
             df_precos_filt = df_precos[df_precos.index >= data_inicio]
             df_div_filt = df_div[df_div['Data'] >= data_inicio]
@@ -214,7 +223,6 @@ def calcular_ranking_dividendos(tickers_consistentes, periodo_dy_anos=10):
                     # CORREÇÃO: usar 'YE' em vez de 'Y' (depreciado)
                     precos_anuais = df_precos_filt.resample('YE').last()['Close'].dropna()
                 except:
-                    # Fallback: se 'YE' não funcionar, usar 'A' (ano)
                     try:
                         precos_anuais = df_precos_filt.resample('A').last()['Close'].dropna()
                     except:
@@ -222,22 +230,25 @@ def calcular_ranking_dividendos(tickers_consistentes, periodo_dy_anos=10):
                 df_div_anual = df_div_filt.groupby(df_div_filt['Data'].dt.year)['Dividendo'].sum()
                 dy_anuais = []
                 for ano, dividendo_total in df_div_anual.items():
-                    # Verificar se o ano existe nos preços anuais
                     if ano in precos_anuais.index.year:
                         preco_final = precos_anuais[precos_anuais.index.year == ano].iloc[0]
                         if preco_final > 0:
                             dy_anuais.append((dividendo_total / preco_final) * 100)
                 if dy_anuais:
                     dy_medio = np.mean(dy_anuais)
+        
         if dados_cotacao is not None:
+            # Usar SETOR_ATIV do dataset (em português), fallback para o Yahoo se não encontrar
+            setor = setor_map.get(ticker, dados_cotacao.get('setor', 'N/A'))
             dados_ranking.append({
                 'Ticker': ticker,
-                'Setor': dados_cotacao.get('setor', 'N/A'),
+                'Setor': setor,
                 'Cotação Atual': dados_cotacao['cotacao'],
                 f'DY Médio ({periodo_dy_anos}A)': dy_medio
             })
         time.sleep(0.5)
         progress_bar.progress((i+1)/len(tickers_consistentes), text=f"Buscando {ticker} ({i+1}/{len(tickers_consistentes)})...")
+    
     progress_bar.empty()
     return pd.DataFrame(dados_ranking).fillna(0)
 
@@ -734,10 +745,9 @@ if modo_analise == "🏆 Dados Gerais":
         if executar_pre_filtro:
             with st.spinner("🔍 Buscando tickers com dividendos consistentes..."):
                 if not TICKERS_CONSISTENTES:
-                    # Se a lista estiver vazia, recalcular (garantir que foi chamado)
                     TICKERS_CONSISTENTES = calcular_tickers_consistentes(df)
             if TICKERS_CONSISTENTES:
-                df_dy = calcular_ranking_dividendos(TICKERS_CONSISTENTES, periodo_dy_anos=10)
+                df_dy = calcular_ranking_dividendos(TICKERS_CONSISTENTES, df, periodo_dy_anos=10)
                 if not df_dy.empty:
                     top10 = df_dy[df_dy['DY Médio (10A)'].notna()].nlargest(10, 'DY Médio (10A)').reset_index(drop=True)
                     if not top10.empty:
