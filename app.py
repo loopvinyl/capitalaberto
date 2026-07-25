@@ -924,7 +924,8 @@ elif modo_analise == "📈 Visão por Empresa":
                             col1, col2, col3, col4 = st.columns(4)
                             col1.metric("Resultado Abrangente", formatar_moeda_brasil_correta(ra))
                             col2.metric("PL Médio", formatar_moeda_brasil_correta(pl_medio))
-                            col3.metric("Nº de Ações", formatar_numero_brasil_correto(num_acoes, 0))
+                            col3.metric("Nº de Ações", formatar_numero_brasil_correto(num_acoes, 0),
+                                        help="Número de ações disponível apenas para o ano mais recente (2025).")
                             col4.metric("Cotação Esperada", f"R$ {cotacao_esp:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                             st.info(f"""
                             **Fórmula:** LPA = {formatar_moeda_brasil_correta(ra)} / {formatar_numero_brasil_correto(num_acoes, 0)} = R$ {lpa:,.2f}
@@ -972,7 +973,8 @@ elif modo_analise == "📈 Visão por Empresa":
                                     col1, col2, col3, col4 = st.columns(4)
                                     col1.metric("Valor da Empresa (EV)", formatar_moeda_brasil_correta(val_emp_reais / 1000))
                                     col2.metric("Valor da Empresa", formatar_moeda_brasil_correta(val_emp_reais / 1000))
-                                    col3.metric("Nº de Ações", formatar_numero_brasil_correto(num_acoes, 0) if num_acoes else "N/A")
+                                    col3.metric("Nº de Ações", formatar_numero_brasil_correto(num_acoes, 0) if num_acoes else "N/A",
+                                                help="Número de ações disponível apenas para o ano mais recente (2025).")
                                     col4.metric("Cotação Esperada", f"R$ {cotacao_esp:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if cotacao_esp else "N/A")
                                     st.info(f"""
                                     **Fórmula:** Valor da Empresa = Lucro Econômico ÷ (SELIC/100)
