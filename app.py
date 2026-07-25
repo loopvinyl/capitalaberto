@@ -391,45 +391,62 @@ def criar_grafico_comparativo(preco_calculado, cotacao_atual, ticker):
     return fig
 
 # ==============================
-# FUNÇÃO PARA BUSCAR NÚMERO DE AÇÕES NO YAHOO (SEMPRE)
+# FUNÇÃO PARA BUSCAR NÚMERO DE AÇÕES NO YAHOO (VERSÃO CORRIGIDA)
 # ==============================
 @st.cache_data(ttl=3600)
-def buscar_numero_acoes_yahoo(ticker, cd_cvm=None, cd_cvm_to_tickers=None):
+def buscar_numero_acoes_yahoo(ticker):
     """
-    Busca o número total de ações em circulação no Yahoo Finance.
-    Se cd_cvm e cd_cvm_to_tickers forem fornecidos, soma as ações de todas as classes (ON + PN)
-    para obter o total da empresa. Caso contrário, usa apenas o ticker informado.
+    Busca o número total de ações em circulação no Yahoo Finance,
+    varrendo todas as classes de ações da B3 (ON, PN, Units).
+    Exemplo: para "CPFE", testa CPFE3.SA, CPFE4.SA, CPFE5.SA, etc.
+    Soma todas as ações encontradas para obter o total da empresa.
     """
-    total_shares = 0
-    tickers_para_buscar = []
+    # Extrair a base do ticker (remover número final, se houver)
+    import re
+    base = re.sub(r'\d+$', '', ticker).upper()
     
-    if cd_cvm and cd_cvm_to_tickers:
-        tickers_para_buscar = cd_cvm_to_tickers.get(cd_cvm, [])
+    # Sufixos comuns na B3: ON=3, PN=4, Units=5,6,7,10,11
+    sufixos = ['3', '4', '5', '6', '7', '10', '11']
+    total_acoes = 0
+    classes_encontradas = []
     
-    # Se não houver lista de tickers para o CD_CVM, usar o ticker atual
-    if not tickers_para_buscar:
-        tickers_para_buscar = [ticker]
-    
-    # Buscar sharesOutstanding para cada ticker
-    for t in tickers_para_buscar:
+    # Tentar cada classe
+    for suf in sufixos:
+        ticker_completo = f"{base}{suf}.SA"
         try:
-            acao = yf.Ticker(f"{t}.SA")
+            acao = yf.Ticker(ticker_completo)
             info = acao.info
             shares = info.get('sharesOutstanding')
             if shares and shares > 0:
-                total_shares += shares
+                total_acoes += shares
+                classes_encontradas.append((ticker_completo, shares))
         except:
             pass
     
-    # Se a soma deu zero, tentar o ticker original individualmente
-    if total_shares == 0 and len(tickers_para_buscar) > 1:
+    # Se não encontrou nenhuma classe, tentar o ticker base puro
+    if not classes_encontradas:
+        try:
+            acao = yf.Ticker(f"{base}.SA")
+            info = acao.info
+            shares = info.get('sharesOutstanding')
+            if shares and shares > 0:
+                total_acoes = shares
+                classes_encontradas.append((f"{base}.SA", shares))
+        except:
+            pass
+    
+    # Se ainda não encontrou, tentar o ticker original como veio
+    if not classes_encontradas:
         try:
             acao = yf.Ticker(f"{ticker}.SA")
-            total_shares = acao.info.get('sharesOutstanding', 0)
+            info = acao.info
+            shares = info.get('sharesOutstanding')
+            if shares and shares > 0:
+                total_acoes = shares
         except:
             pass
     
-    return total_shares if total_shares > 0 else None
+    return total_acoes if total_acoes > 0 else None
 
 # ==============================
 # CARREGAMENTO DOS DADOS CVM
@@ -627,13 +644,6 @@ st.title("📊 Dashboard Capital Aberto")
 
 # Carregar dados
 df = load_data()
-
-# ==============================
-# CRIAR MAPAS PARA BUSCA DE AÇÕES NO YAHOO
-# ==============================
-# Mapa de ticker para CD_CVM e vice-versa
-ticker_to_cd_cvm = df[['Ticker', 'CD_CVM']].drop_duplicates().set_index('Ticker')['CD_CVM'].to_dict()
-cd_cvm_to_tickers = df.groupby('CD_CVM')['Ticker'].apply(list).to_dict()
 
 # ==============================
 # SIDEBAR – FILTROS
@@ -959,9 +969,14 @@ elif modo_analise == "📈 Visão por Empresa":
                         ra = df_filtrado['Resultado Abrangente do Período'].iloc[0] if 'Resultado Abrangente do Período' in df_filtrado.columns else None
                         pl_medio = df_filtrado['PL Médio'].iloc[0] if 'PL Médio' in df_filtrado.columns else None
                         
-                        # SEMPRE buscar número de ações no Yahoo Finance
-                        cd_cvm = ticker_to_cd_cvm.get(ticker_selecionado)
-                        num_acoes = buscar_numero_acoes_yahoo(ticker_selecionado, cd_cvm, cd_cvm_to_tickers)
+                        # SEMPRE buscar número de ações no Yahoo Finance (versão corrigida)
+                        num_acoes = buscar_numero_acoes_yahoo(ticker_selecionado)
+                        
+                        # Fallback: usar o valor do dataset se Yahoo falhar
+                        if not num_acoes:
+                            num_acoes = df_filtrado['Numero_Acoes'].iloc[0] if 'Numero_Acoes' in df_filtrado.columns and pd.notna(df_filtrado['Numero_Acoes'].iloc[0]) else None
+                            if num_acoes:
+                                st.info("ℹ️ Usando número de ações do dataset (Yahoo não disponível).")
                         
                         if ra and pl_medio and num_acoes and num_acoes > 0:
                             col_selic1, col_selic2 = st.columns([2,1])
@@ -1018,8 +1033,16 @@ elif modo_analise == "📈 Visão por Empresa":
                                 val_emp = calcular_valuation_lucro_economico_selic(le, selic)
                                 if val_emp:
                                     val_emp_reais = val_emp * 1000
-                                    cd_cvm = ticker_to_cd_cvm.get(ticker_selecionado)
-                                    num_acoes = buscar_numero_acoes_yahoo(ticker_selecionado, cd_cvm, cd_cvm_to_tickers)
+                                    
+                                    # SEMPRE buscar número de ações no Yahoo Finance (versão corrigida)
+                                    num_acoes = buscar_numero_acoes_yahoo(ticker_selecionado)
+                                    
+                                    # Fallback: usar o valor do dataset se Yahoo falhar
+                                    if not num_acoes:
+                                        num_acoes = df_filtrado['Numero_Acoes'].iloc[0] if 'Numero_Acoes' in df_filtrado.columns and pd.notna(df_filtrado['Numero_Acoes'].iloc[0]) else None
+                                        if num_acoes:
+                                            st.info("ℹ️ Usando número de ações do dataset (Yahoo não disponível).")
+                                    
                                     cotacao_esp = val_emp_reais / num_acoes if num_acoes and num_acoes > 0 else None
                                     col1, col2, col3, col4 = st.columns(4)
                                     col1.metric("Valor da Empresa (EV)", formatar_moeda_brasil_correta(val_emp_reais / 1000))
