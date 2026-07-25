@@ -391,6 +391,47 @@ def criar_grafico_comparativo(preco_calculado, cotacao_atual, ticker):
     return fig
 
 # ==============================
+# FUNÇÃO PARA BUSCAR NÚMERO DE AÇÕES NO YAHOO (SEMPRE)
+# ==============================
+@st.cache_data(ttl=3600)
+def buscar_numero_acoes_yahoo(ticker, cd_cvm=None, cd_cvm_to_tickers=None):
+    """
+    Busca o número total de ações em circulação no Yahoo Finance.
+    Se cd_cvm e cd_cvm_to_tickers forem fornecidos, soma as ações de todas as classes (ON + PN)
+    para obter o total da empresa. Caso contrário, usa apenas o ticker informado.
+    """
+    total_shares = 0
+    tickers_para_buscar = []
+    
+    if cd_cvm and cd_cvm_to_tickers:
+        tickers_para_buscar = cd_cvm_to_tickers.get(cd_cvm, [])
+    
+    # Se não houver lista de tickers para o CD_CVM, usar o ticker atual
+    if not tickers_para_buscar:
+        tickers_para_buscar = [ticker]
+    
+    # Buscar sharesOutstanding para cada ticker
+    for t in tickers_para_buscar:
+        try:
+            acao = yf.Ticker(f"{t}.SA")
+            info = acao.info
+            shares = info.get('sharesOutstanding')
+            if shares and shares > 0:
+                total_shares += shares
+        except:
+            pass
+    
+    # Se a soma deu zero, tentar o ticker original individualmente
+    if total_shares == 0 and len(tickers_para_buscar) > 1:
+        try:
+            acao = yf.Ticker(f"{ticker}.SA")
+            total_shares = acao.info.get('sharesOutstanding', 0)
+        except:
+            pass
+    
+    return total_shares if total_shares > 0 else None
+
+# ==============================
 # CARREGAMENTO DOS DADOS CVM
 # ==============================
 @st.cache_data
@@ -586,6 +627,13 @@ st.title("📊 Dashboard Capital Aberto")
 
 # Carregar dados
 df = load_data()
+
+# ==============================
+# CRIAR MAPAS PARA BUSCA DE AÇÕES NO YAHOO
+# ==============================
+# Mapa de ticker para CD_CVM e vice-versa
+ticker_to_cd_cvm = df[['Ticker', 'CD_CVM']].drop_duplicates().set_index('Ticker')['CD_CVM'].to_dict()
+cd_cvm_to_tickers = df.groupby('CD_CVM')['Ticker'].apply(list).to_dict()
 
 # ==============================
 # SIDEBAR – FILTROS
@@ -910,9 +958,11 @@ elif modo_analise == "📈 Visão por Empresa":
                         st.subheader("🏦 Valuation para Bancos")
                         ra = df_filtrado['Resultado Abrangente do Período'].iloc[0] if 'Resultado Abrangente do Período' in df_filtrado.columns else None
                         pl_medio = df_filtrado['PL Médio'].iloc[0] if 'PL Médio' in df_filtrado.columns else None
-                        num_acoes = df_filtrado['Numero_Acoes'].iloc[0] if 'Numero_Acoes' in df_filtrado.columns and pd.notna(df_filtrado['Numero_Acoes'].iloc[0]) else None
-                        if not num_acoes and dados_cotacao and dados_cotacao.get('sharesOutstanding'):
-                            num_acoes = dados_cotacao['sharesOutstanding']
+                        
+                        # SEMPRE buscar número de ações no Yahoo Finance
+                        cd_cvm = ticker_to_cd_cvm.get(ticker_selecionado)
+                        num_acoes = buscar_numero_acoes_yahoo(ticker_selecionado, cd_cvm, cd_cvm_to_tickers)
+                        
                         if ra and pl_medio and num_acoes and num_acoes > 0:
                             col_selic1, col_selic2 = st.columns([2,1])
                             with col_selic2:
@@ -925,7 +975,7 @@ elif modo_analise == "📈 Visão por Empresa":
                             col1.metric("Resultado Abrangente", formatar_moeda_brasil_correta(ra))
                             col2.metric("PL Médio", formatar_moeda_brasil_correta(pl_medio))
                             col3.metric("Nº de Ações", formatar_numero_brasil_correto(num_acoes, 0),
-                                        help="Número de ações disponível apenas para o ano mais recente (2025).")
+                                        help="Número de ações obtido do Yahoo Finance (atual).")
                             col4.metric("Cotação Esperada", f"R$ {cotacao_esp:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                             st.info(f"""
                             **Fórmula:** LPA = {formatar_moeda_brasil_correta(ra)} / {formatar_numero_brasil_correto(num_acoes, 0)} = R$ {lpa:,.2f}
@@ -968,13 +1018,14 @@ elif modo_analise == "📈 Visão por Empresa":
                                 val_emp = calcular_valuation_lucro_economico_selic(le, selic)
                                 if val_emp:
                                     val_emp_reais = val_emp * 1000
-                                    num_acoes = df_filtrado['Numero_Acoes'].iloc[0] if 'Numero_Acoes' in df_filtrado.columns and pd.notna(df_filtrado['Numero_Acoes'].iloc[0]) else None
+                                    cd_cvm = ticker_to_cd_cvm.get(ticker_selecionado)
+                                    num_acoes = buscar_numero_acoes_yahoo(ticker_selecionado, cd_cvm, cd_cvm_to_tickers)
                                     cotacao_esp = val_emp_reais / num_acoes if num_acoes and num_acoes > 0 else None
                                     col1, col2, col3, col4 = st.columns(4)
                                     col1.metric("Valor da Empresa (EV)", formatar_moeda_brasil_correta(val_emp_reais / 1000))
                                     col2.metric("Valor da Empresa", formatar_moeda_brasil_correta(val_emp_reais / 1000))
                                     col3.metric("Nº de Ações", formatar_numero_brasil_correto(num_acoes, 0) if num_acoes else "N/A",
-                                                help="Número de ações disponível apenas para o ano mais recente (2025).")
+                                                help="Número de ações obtido do Yahoo Finance (atual).")
                                     col4.metric("Cotação Esperada", f"R$ {cotacao_esp:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if cotacao_esp else "N/A")
                                     st.info(f"""
                                     **Fórmula:** Valor da Empresa = Lucro Econômico ÷ (SELIC/100)
