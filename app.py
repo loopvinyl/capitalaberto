@@ -152,23 +152,44 @@ def calcular_estatisticas_dividendos(df_dividendos):
     }
 
 @st.cache_data(ttl=86400)
-def calcular_tickers_consistentes(df_cvm, ano_minimo_cvm=2010):
-    st.info("🔎 **Pré‑filtro:** Buscando tickers com dividendos anuais consistentes desde 2010.")
-    ano_maximo_cvm = df_cvm['Ano'].max()
-    anos_necessarios = list(range(ano_minimo_cvm, ano_maximo_cvm + 1))
-    tickers_validos = df_cvm[df_cvm['Ano'] == ano_maximo_cvm]['Ticker'].unique()
+@st.cache_data(ttl=86400)
+def calcular_tickers_consistentes(df_cvm, anos_verificar=5, minimo_anos_com_pagamento=3):
+    """
+    Usa os dados da DFC (coluna 'Pagamento de Dividendos') para identificar
+    tickers que pagaram dividendos/JCP em pelo menos 'minimo_anos_com_pagamento'
+    dos últimos 'anos_verificar' anos disponíveis no dataset.
+    """
+    st.info(f"🔎 **Pré‑filtro:** Buscando tickers com pagamento de dividendos em pelo menos {minimo_anos_com_pagamento} dos últimos {anos_verificar} anos.")
+    
+    # Pegar os últimos N anos disponíveis no dataset
+    anos_disponiveis = sorted(df_cvm['Ano'].unique(), reverse=True)
+    ultimos_anos = anos_disponiveis[:anos_verificar]
+    
+    # Lista de tickers únicos
+    tickers_validos = df_cvm['Ticker'].unique()
     tickers_consistentes = []
-    progress_bar = st.progress(0, text="Verificando consistência anual de dividendos...")
+    
+    progress_bar = st.progress(0, text="Verificando consistência de dividendos...")
     for i, ticker in enumerate(tickers_validos):
-        df_div = buscar_dividendos_historicos(ticker)
-        if df_div is not None and not df_div.empty:
-            anos_pagamento = df_div[df_div['Dividendo'] > 0]['Ano'].unique()
-            if all(ano in anos_pagamento for ano in anos_necessarios):
-                tickers_consistentes.append(ticker)
-        time.sleep(0.01)
+        # Filtrar dados do ticker para os últimos anos
+        df_ticker = df_cvm[(df_cvm['Ticker'] == ticker) & (df_cvm['Ano'].isin(ultimos_anos))]
+        
+        # Verificar se há dados de pagamento de dividendos
+        if 'Pagamento de Dividendos' not in df_ticker.columns:
+            continue
+        
+        # Contar anos com pagamento > 0
+        pagamentos = df_ticker[df_ticker['Pagamento de Dividendos'].notna() & (df_ticker['Pagamento de Dividendos'] != 0)]
+        anos_com_pagamento = pagamentos['Ano'].nunique()
+        
+        if anos_com_pagamento >= minimo_anos_com_pagamento:
+            tickers_consistentes.append(ticker)
+        
+        # Progresso
         progress_bar.progress((i+1)/len(tickers_validos), text=f"Verificando {ticker} ({i+1}/{len(tickers_validos)})...")
+    
     progress_bar.empty()
-    st.success(f"✅ {len(tickers_consistentes)} tickers com pagamento consistente.")
+    st.success(f"✅ {len(tickers_consistentes)} tickers com pagamento consistente (≥ {minimo_anos_com_pagamento} anos nos últimos {anos_verificar}).")
     return tickers_consistentes
 
 @st.cache_data(ttl=86400)
