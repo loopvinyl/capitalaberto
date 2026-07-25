@@ -391,7 +391,7 @@ def criar_grafico_comparativo(preco_calculado, cotacao_atual, ticker):
     return fig
 
 # ==============================
-# FUNÇÃO PARA BUSCAR NÚMERO DE AÇÕES NO YAHOO (VERSÃO CORRIGIDA)
+# FUNÇÃO PARA BUSCAR NÚMERO DE AÇÕES NO YAHOO (VERSÃO COMPLETA)
 # ==============================
 @st.cache_data(ttl=3600)
 def buscar_numero_acoes_yahoo(ticker):
@@ -401,16 +401,13 @@ def buscar_numero_acoes_yahoo(ticker):
     Exemplo: para "CPFE", testa CPFE3.SA, CPFE4.SA, CPFE5.SA, etc.
     Soma todas as ações encontradas para obter o total da empresa.
     """
-    # Extrair a base do ticker (remover número final, se houver)
     import re
     base = re.sub(r'\d+$', '', ticker).upper()
     
-    # Sufixos comuns na B3: ON=3, PN=4, Units=5,6,7,10,11
     sufixos = ['3', '4', '5', '6', '7', '10', '11']
     total_acoes = 0
     classes_encontradas = []
     
-    # Tentar cada classe
     for suf in sufixos:
         ticker_completo = f"{base}{suf}.SA"
         try:
@@ -423,7 +420,6 @@ def buscar_numero_acoes_yahoo(ticker):
         except:
             pass
     
-    # Se não encontrou nenhuma classe, tentar o ticker base puro
     if not classes_encontradas:
         try:
             acao = yf.Ticker(f"{base}.SA")
@@ -431,12 +427,10 @@ def buscar_numero_acoes_yahoo(ticker):
             shares = info.get('sharesOutstanding')
             if shares and shares > 0:
                 total_acoes = shares
-                classes_encontradas.append((f"{base}.SA", shares))
         except:
             pass
     
-    # Se ainda não encontrou, tentar o ticker original como veio
-    if not classes_encontradas:
+    if not classes_encontradas and not total_acoes:
         try:
             acao = yf.Ticker(f"{ticker}.SA")
             info = acao.info
@@ -967,6 +961,13 @@ elif modo_analise == "📈 Visão por Empresa":
                     if is_bank:
                         st.subheader("🏦 Valuation para Bancos")
                         ra = df_filtrado['Resultado Abrangente do Período'].iloc[0] if 'Resultado Abrangente do Período' in df_filtrado.columns else None
+                        
+                        # Fallback: usar Lucro Líquido se Resultado Abrangente estiver vazio
+                        if pd.isna(ra) or ra == 0:
+                            ra = df_filtrado['Lucro/Prejuízo Consolidado do Período'].iloc[0] if 'Lucro/Prejuízo Consolidado do Período' in df_filtrado.columns else None
+                            if ra:
+                                st.info("ℹ️ Usando Lucro Líquido como fallback (Resultado Abrangente não disponível).")
+                        
                         pl_medio = df_filtrado['PL Médio'].iloc[0] if 'PL Médio' in df_filtrado.columns else None
                         
                         # SEMPRE buscar número de ações no Yahoo Finance (versão corrigida)
@@ -987,7 +988,7 @@ elif modo_analise == "📈 Visão por Empresa":
                             r = selic / 100
                             cotacao_esp = (lpa - (vpa * r)) / r
                             col1, col2, col3, col4 = st.columns(4)
-                            col1.metric("Resultado Abrangente", formatar_moeda_brasil_correta(ra))
+                            col1.metric("Resultado Utilizado", "Abrangente" if 'Resultado Abrangente do Período' in df_filtrado.columns and pd.notna(df_filtrado['Resultado Abrangente do Período'].iloc[0]) else "Lucro Líquido (fallback)")
                             col2.metric("PL Médio", formatar_moeda_brasil_correta(pl_medio))
                             col3.metric("Nº de Ações", formatar_numero_brasil_correto(num_acoes, 0),
                                         help="Número de ações obtido do Yahoo Finance (atual).")
