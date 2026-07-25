@@ -389,8 +389,17 @@ def load_data():
         df['Ticker'] = df['Ticker'].fillna('').astype(str)
         df.loc[df['Ticker'] == '', 'Ticker'] = 'CD_' + df.loc[df['Ticker'] == '', 'CD_CVM'].astype(str)
     else:
-        # Se não houver Ticker, criar a partir do CD_CVM
         df['Ticker'] = 'CD_' + df['CD_CVM'].astype(str)
+
+    # Garantir que DENOM_CIA exista
+    if 'DENOM_CIA' not in df.columns:
+        if 'DENOM_SOCIAL' in df.columns:
+            df['DENOM_CIA'] = df['DENOM_SOCIAL']
+        elif 'DENOM_COMERC' in df.columns:
+            df['DENOM_CIA'] = df['DENOM_COMERC']
+        else:
+            df['DENOM_CIA'] = df['Ticker']
+        df['DENOM_CIA'] = df['DENOM_CIA'].fillna(df['Ticker'])
 
     # Identificar bancos
     if 'SETOR_ATIV' in df.columns:
@@ -546,9 +555,6 @@ executar_pre_filtro = st.sidebar.checkbox(
     value=False,
     help="Busca tickers que pagaram dividendos anualmente desde 2010"
 )
-TICKERS_CONSISTENTES = []
-if executar_pre_filtro:
-    TICKERS_CONSISTENTES = calcular_tickers_consistentes(df)
 
 modo_analise = st.sidebar.radio(
     "Modo de Análise",
@@ -558,30 +564,24 @@ modo_analise = st.sidebar.radio(
 anos_disponiveis = sorted(df["Ano"].unique(), reverse=True)
 ano_selecionado = st.sidebar.selectbox("Ano:", anos_disponiveis)
 
-def get_empresa_options(df):
-    # Garantir que Ticker não seja vazio (já foi feito no load_data)
-    tickers = df["Ticker"].dropna().unique()
-    options = {}
-    for ticker in tickers:
-        # Buscar o nome da empresa (DENOM_CIA)
-        nome = df[df["Ticker"] == ticker]["DENOM_CIA"].iloc[0] if not df[df["Ticker"] == ticker].empty else ticker
-        options[f"{ticker}: {nome}"] = ticker
-    return options
+# Lista de tickers para o seletor (apenas ticker)
+tickers_disponiveis = sorted(df["Ticker"].dropna().unique())
 
 if modo_analise == "📈 Visão por Empresa":
-    empresa_options = get_empresa_options(df)
-    selected_label = st.sidebar.selectbox("Empresa:", options=list(empresa_options.keys()))
-    ticker_selecionado = empresa_options[selected_label]
+    ticker_selecionado = st.sidebar.selectbox("Empresa:", tickers_disponiveis)
     df_filtrado = df[(df["Ticker"] == ticker_selecionado) & (df["Ano"] == ano_selecionado)]
     df_empresa_todos_anos = df[df["Ticker"] == ticker_selecionado].sort_values("Ano")
-
 elif modo_analise == "🏭 Análise Setorial":
     setor_selecionado = st.sidebar.selectbox("Setor:", sorted(df["SETOR_ATIV"].dropna().unique()))
     df_filtrado = df[(df["SETOR_ATIV"] == setor_selecionado) & (df["Ano"] == ano_selecionado)]
     df_setor_todos_anos = df[df["SETOR_ATIV"] == setor_selecionado].sort_values(["Ano", "Ticker"])
-
 else:  # Dados Gerais
     df_filtrado = df[df["Ano"] == ano_selecionado]
+
+# Variável global para tickers consistentes (será preenchida se ativado)
+TICKERS_CONSISTENTES = []
+if executar_pre_filtro:
+    TICKERS_CONSISTENTES = calcular_tickers_consistentes(df)
 
 # ==============================
 # MODO: DADOS GERAIS
@@ -697,27 +697,34 @@ if modo_analise == "🏆 Dados Gerais":
             fig.update_layout(yaxis_tickformat=',.2%')
             st.plotly_chart(fig, use_container_width=True)
 
-    # --- Aba 5: Dividendos Consistentes ---
+    # --- Aba 5: Dividendos Consistentes (CORRIGIDA) ---
     with tabs[4]:
         st.subheader("👑 Top 10 - Dividend Yield Médio (Empresas Consistentes)")
-        if TICKERS_CONSISTENTES:
-            df_dy = calcular_ranking_dividendos(TICKERS_CONSISTENTES, periodo_dy_anos=10)
-            if not df_dy.empty:
-                top10 = df_dy[df_dy['DY Médio (10A)'].notna()].nlargest(10, 'DY Médio (10A)').reset_index(drop=True)
-                if not top10.empty:
-                    top10.index = top10.index + 1
-                    top10 = top10.rename(columns={'DY Médio (10A)': 'DY Médio (10 Anos)'})
-                    display = top10.copy()
-                    display['DY Médio (10 Anos)'] = display['DY Médio (10 Anos)'].apply(lambda x: formatar_percentual_brasil(x/100, 2) if pd.notna(x) else 'N/A')
-                    display['Cotação Atual'] = display['Cotação Atual'].apply(lambda x: f"R$ {formatar_numero_brasil_correto(x, 2)}")
-                    st.dataframe(display, use_container_width=True)
-                    fig = px.bar(top10, x="Ticker", y="DY Médio (10 Anos)", color="Setor", title="DY Médio dos Últimos 10 Anos")
-                    fig.update_layout(yaxis_tickformat='.2f')
-                    st.plotly_chart(fig, use_container_width=True)
+        if executar_pre_filtro:
+            with st.spinner("🔍 Buscando tickers com dividendos consistentes..."):
+                if not TICKERS_CONSISTENTES:
+                    # Se a lista estiver vazia, recalcular (garantir que foi chamado)
+                    TICKERS_CONSISTENTES = calcular_tickers_consistentes(df)
+            if TICKERS_CONSISTENTES:
+                df_dy = calcular_ranking_dividendos(TICKERS_CONSISTENTES, periodo_dy_anos=10)
+                if not df_dy.empty:
+                    top10 = df_dy[df_dy['DY Médio (10A)'].notna()].nlargest(10, 'DY Médio (10A)').reset_index(drop=True)
+                    if not top10.empty:
+                        top10.index = top10.index + 1
+                        top10 = top10.rename(columns={'DY Médio (10A)': 'DY Médio (10 Anos)'})
+                        display = top10.copy()
+                        display['DY Médio (10 Anos)'] = display['DY Médio (10 Anos)'].apply(lambda x: formatar_percentual_brasil(x/100, 2) if pd.notna(x) else 'N/A')
+                        display['Cotação Atual'] = display['Cotação Atual'].apply(lambda x: f"R$ {formatar_numero_brasil_correto(x, 2)}")
+                        st.dataframe(display, use_container_width=True)
+                        fig = px.bar(top10, x="Ticker", y="DY Médio (10 Anos)", color="Setor", title="DY Médio dos Últimos 10 Anos")
+                        fig.update_layout(yaxis_tickformat='.2f')
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("Nenhum ticker consistente com DY calculado.")
                 else:
-                    st.warning("Nenhum ticker consistente com DY calculado.")
+                    st.warning("Não foi possível calcular o DY médio para os tickers consistentes.")
             else:
-                st.warning("Não foi possível calcular o DY médio.")
+                st.info("Nenhum ticker com pagamento de dividendos anuais consistentes desde 2010.")
         else:
             st.info("Pré‑filtro de dividendos consistentes desativado. Ative na barra lateral.")
 
@@ -1156,9 +1163,7 @@ elif modo_analise == "📈 Visão por Empresa":
             else:
                 st.info("São necessários dados de múltiplos anos.")
 
-        # ===================================================================
-        # ABA DIVIDENDOS – VERSÃO CORRIGIDA
-        # ===================================================================
+        # --- Aba Dividendos (CORRIGIDA) ---
         with tab_dividendos:
             st.subheader("💰 Dividendos / JCP Pagos")
 
@@ -1201,27 +1206,21 @@ elif modo_analise == "📈 Visão por Empresa":
                 st.dataframe(display.sort_values('Data (Ex)', ascending=False), use_container_width=True)
 
             else:
-                # 2. Fallback: Dados da DFC (Demonstrações Financeiras) – MOSTRAR APENAS TOTAIS
+                # 2. Fallback: Dados da DFC – MOSTRAR APENAS TOTAIS
                 st.info("ℹ️ Dados de dividendos do Yahoo Finance não disponíveis. Exibindo valores totais pagos conforme a DFC.")
                 
-                # Extrair dados do arquivo (Pagamento de Dividendos)
                 if 'Pagamento de Dividendos' in df_empresa_todos_anos.columns:
                     df_empresa_div = df_empresa_todos_anos[['Ano', 'Pagamento de Dividendos']].copy()
-                    # Filtrar apenas anos com pagamento (diferente de zero ou não nulo)
                     df_empresa_div = df_empresa_div[df_empresa_div['Pagamento de Dividendos'].notna()]
-                    # Converter de milhares para reais (multiplicar por 1000)
                     df_empresa_div['Total Pago (R$)'] = df_empresa_div['Pagamento de Dividendos'] * 1000
                     
                     if not df_empresa_div.empty:
                         st.subheader(f"📊 Proventos Totais Pagos (R$) - {ticker_selecionado}")
-                        
-                        # Gráfico de barras do total pago por ano
                         fig = px.bar(df_empresa_div, x='Ano', y='Total Pago (R$)', 
                                      title="Total de Dividendos/JCP Pagos por Ano (Fonte: DFC)")
                         fig.update_layout(yaxis_tickformat=',.0f')
                         st.plotly_chart(fig, use_container_width=True)
                         
-                        # Tabela com detalhes (apenas total)
                         st.subheader("📋 Detalhamento Anual")
                         display = df_empresa_div[['Ano', 'Total Pago (R$)']].copy()
                         display['Total Pago (R$)'] = display['Total Pago (R$)'].apply(
@@ -1229,15 +1228,12 @@ elif modo_analise == "📈 Visão por Empresa":
                         )
                         st.dataframe(display, use_container_width=True)
                         
-                        # Estatísticas (total e média)
                         total_pago = df_empresa_div['Total Pago (R$)'].sum()
                         media_anual = df_empresa_div['Total Pago (R$)'].mean()
-                        
                         col1, col2 = st.columns(2)
                         col1.metric("Total Pago (período)", f"R$ {total_pago:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                         col2.metric("Média Anual (Total)", f"R$ {media_anual:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                         
-                        # Se houver cotação atual, mostrar total pago no último ano
                         ultimo_ano = df_empresa_div['Ano'].max()
                         ultimo_total = df_empresa_div[df_empresa_div['Ano'] == ultimo_ano]['Total Pago (R$)'].iloc[0] if not df_empresa_div.empty else None
                         if ultimo_total and ultimo_total > 0:
