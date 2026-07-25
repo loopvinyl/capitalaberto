@@ -172,6 +172,7 @@ def calcular_tickers_consistentes(df_cvm, ano_minimo_cvm=2010):
     return tickers_consistentes
 
 @st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400)
 def calcular_ranking_dividendos(tickers_consistentes, periodo_dy_anos=10):
     dados_ranking = []
     if not tickers_consistentes:
@@ -188,10 +189,19 @@ def calcular_ranking_dividendos(tickers_consistentes, periodo_dy_anos=10):
             df_precos_filt = df_precos[df_precos.index >= data_inicio]
             df_div_filt = df_div[df_div['Data'] >= data_inicio]
             if not df_precos_filt.empty and not df_div_filt.empty:
+                try:
+                    # CORREÇÃO: usar 'YE' em vez de 'Y' (depreciado)
+                    precos_anuais = df_precos_filt.resample('YE').last()['Close'].dropna()
+                except:
+                    # Fallback: se 'YE' não funcionar, usar 'A' (ano)
+                    try:
+                        precos_anuais = df_precos_filt.resample('A').last()['Close'].dropna()
+                    except:
+                        precos_anuais = pd.Series(dtype=float)
                 df_div_anual = df_div_filt.groupby(df_div_filt['Data'].dt.year)['Dividendo'].sum()
-                precos_anuais = df_precos_filt.resample('Y').last()['Close'].dropna()
                 dy_anuais = []
                 for ano, dividendo_total in df_div_anual.items():
+                    # Verificar se o ano existe nos preços anuais
                     if ano in precos_anuais.index.year:
                         preco_final = precos_anuais[precos_anuais.index.year == ano].iloc[0]
                         if preco_final > 0:
