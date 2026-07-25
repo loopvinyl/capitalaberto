@@ -563,7 +563,8 @@ def get_empresa_options(df):
     tickers = df["Ticker"].dropna().unique()
     options = {}
     for ticker in tickers:
-        nome = df[df["Ticker"] == ticker]["DENOM_CIA"].iloc[0]
+        # Buscar o nome da empresa (DENOM_CIA)
+        nome = df[df["Ticker"] == ticker]["DENOM_CIA"].iloc[0] if not df[df["Ticker"] == ticker].empty else ticker
         options[f"{ticker}: {nome}"] = ticker
     return options
 
@@ -1155,117 +1156,96 @@ elif modo_analise == "📈 Visão por Empresa":
             else:
                 st.info("São necessários dados de múltiplos anos.")
 
-        # --- Aba Dividendos (com fallback para DFC) ---
+        # ===================================================================
+        # ABA DIVIDENDOS – VERSÃO CORRIGIDA
+        # ===================================================================
         with tab_dividendos:
-            st.subheader("💰 Dividendos")
-            
-            # 1. Tentar buscar do Yahoo Finance
+            st.subheader("💰 Dividendos / JCP Pagos")
+
+            # 1. Tentar buscar do Yahoo Finance (para exibir os dados históricos, se disponível)
             df_div_yahoo = buscar_dividendos_historicos(ticker_selecionado)
-            
+
             if df_div_yahoo is not None and not df_div_yahoo.empty:
-                # === DADOS DO YAHOO FINANCE ===
+                # Dados do Yahoo – exibir como antes
                 stats = calcular_estatisticas_dividendos(df_div_yahoo)
-                if stats:
-                    st.subheader(f"📊 Histórico de Dividendos - {ticker_selecionado}")
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("Total Pago (desde 2010)", f"R$ {stats['total_dividendos']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                    col2.metric("Média Anual", f"R$ {stats['media_anual']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                    col3.metric("Último Provento", f"R$ {stats['ultimo_dividendo']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), 
-                               help=f"Data: {stats['data_ultimo'].strftime('%d/%m/%Y') if stats['data_ultimo'] else 'N/A'}")
-                    cotacao = buscar_cotacao_atual(ticker_selecionado)
-                    dy = None
-                    if cotacao and cotacao['cotacao'] > 0:
-                        data_limite = datetime.now() - timedelta(days=365)
-                        div_12m = df_div_yahoo[df_div_yahoo['Data'] >= data_limite]
-                        if not div_12m.empty:
-                            total_12m = div_12m['Dividendo'].sum()
-                            dy = (total_12m / cotacao['cotacao']) * 100
-                    col4.metric("Dividend Yield (12M)", formatar_percentual_brasil(dy/100) if dy is not None else "N/A")
-                    
-                    st.markdown("---")
-                    df_anual = df_div_yahoo.groupby('Ano')['Dividendo'].sum().reset_index()
-                    df_anual.columns = ['Ano', 'Total']
-                    fig = px.bar(df_anual, x='Ano', y='Total', title=f"Proventos por Ano - {ticker_selecionado}")
-                    fig.update_layout(yaxis_tickformat=',.2f')
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    st.subheader("📋 Histórico Detalhado")
-                    display = df_div_yahoo[['Data', 'Dividendo']].copy()
-                    display.columns = ['Data (Ex)', 'Valor (R$)']
-                    display['Valor (R$)'] = display['Valor (R$)'].apply(
-                        lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                    )
-                    display['Data (Ex)'] = display['Data (Ex)'].dt.strftime('%d/%m/%Y')
-                    st.dataframe(display.sort_values('Data (Ex)', ascending=False), use_container_width=True)
-            
-            else:
-                # === FALLBACK: DADOS DA DFC (DEMONSTRAÇÕES FINANCEIRAS) ===
-                st.info("ℹ️ Dados de dividendos do Yahoo Finance não disponíveis. Usando dados das demonstrações financeiras (DFC) com divisão pelo número de ações.")
+                st.subheader(f"📊 Histórico de Dividendos (Yahoo) - {ticker_selecionado}")
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Total Pago (desde 2010)", f"R$ {stats['total_dividendos']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                col2.metric("Média Anual", f"R$ {stats['media_anual']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                col3.metric("Último Provento", f"R$ {stats['ultimo_dividendo']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), 
+                           help=f"Data: {stats['data_ultimo'].strftime('%d/%m/%Y') if stats['data_ultimo'] else 'N/A'}")
+                cotacao = buscar_cotacao_atual(ticker_selecionado)
+                dy = None
+                if cotacao and cotacao['cotacao'] > 0:
+                    data_limite = datetime.now() - timedelta(days=365)
+                    div_12m = df_div_yahoo[df_div_yahoo['Data'] >= data_limite]
+                    if not div_12m.empty:
+                        total_12m = div_12m['Dividendo'].sum()
+                        dy = (total_12m / cotacao['cotacao']) * 100
+                col4.metric("Dividend Yield (12M)", formatar_percentual_brasil(dy/100) if dy is not None else "N/A")
                 
-                # Extrair dados do arquivo (Pagamento de Dividendos e Numero_Acoes)
-                if 'Pagamento de Dividendos' in df_filtrado.columns and 'Numero_Acoes' in df_filtrado.columns:
-                    df_empresa_div = df_empresa_todos_anos[['Ano', 'Pagamento de Dividendos', 'Numero_Acoes']].copy()
-                    # Filtrar apenas anos com pagamento
+                st.markdown("---")
+                df_anual = df_div_yahoo.groupby('Ano')['Dividendo'].sum().reset_index()
+                df_anual.columns = ['Ano', 'Total']
+                fig = px.bar(df_anual, x='Ano', y='Total', title=f"Proventos por Ano - {ticker_selecionado}")
+                fig.update_layout(yaxis_tickformat=',.2f')
+                st.plotly_chart(fig, use_container_width=True)
+                
+                st.subheader("📋 Histórico Detalhado")
+                display = df_div_yahoo[['Data', 'Dividendo']].copy()
+                display.columns = ['Data (Ex)', 'Valor (R$)']
+                display['Valor (R$)'] = display['Valor (R$)'].apply(
+                    lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                )
+                display['Data (Ex)'] = display['Data (Ex)'].dt.strftime('%d/%m/%Y')
+                st.dataframe(display.sort_values('Data (Ex)', ascending=False), use_container_width=True)
+
+            else:
+                # 2. Fallback: Dados da DFC (Demonstrações Financeiras) – MOSTRAR APENAS TOTAIS
+                st.info("ℹ️ Dados de dividendos do Yahoo Finance não disponíveis. Exibindo valores totais pagos conforme a DFC.")
+                
+                # Extrair dados do arquivo (Pagamento de Dividendos)
+                if 'Pagamento de Dividendos' in df_empresa_todos_anos.columns:
+                    df_empresa_div = df_empresa_todos_anos[['Ano', 'Pagamento de Dividendos']].copy()
+                    # Filtrar apenas anos com pagamento (diferente de zero ou não nulo)
                     df_empresa_div = df_empresa_div[df_empresa_div['Pagamento de Dividendos'].notna()]
+                    # Converter de milhares para reais (multiplicar por 1000)
+                    df_empresa_div['Total Pago (R$)'] = df_empresa_div['Pagamento de Dividendos'] * 1000
                     
                     if not df_empresa_div.empty:
-                        # Calcular dividendo por ação (em R$)
-                        df_empresa_div['Dividendo por Ação'] = np.where(
-                            df_empresa_div['Numero_Acoes'].notna() & (df_empresa_div['Numero_Acoes'] > 0),
-                            (df_empresa_div['Pagamento de Dividendos'] * 1000) / df_empresa_div['Numero_Acoes'],
-                            np.nan
-                        )
-                        # Total pago em R$ (já em reais)
-                        df_empresa_div['Total Pago (R$)'] = df_empresa_div['Pagamento de Dividendos'] * 1000
+                        st.subheader(f"📊 Proventos Totais Pagos (R$) - {ticker_selecionado}")
                         
-                        st.subheader(f"📊 Proventos por Ação (R$) - {ticker_selecionado}")
+                        # Gráfico de barras do total pago por ano
+                        fig = px.bar(df_empresa_div, x='Ano', y='Total Pago (R$)', 
+                                     title="Total de Dividendos/JCP Pagos por Ano (Fonte: DFC)")
+                        fig.update_layout(yaxis_tickformat=',.0f')
+                        st.plotly_chart(fig, use_container_width=True)
                         
-                        # Gráfico de barras do dividendo por ação
-                        df_plot = df_empresa_div[df_empresa_div['Dividendo por Ação'].notna()]
-                        if not df_plot.empty:
-                            fig = px.bar(df_plot, x='Ano', y='Dividendo por Ação', 
-                                         title="Dividendo/JCP por Ação (Fonte: DFC)")
-                            fig.update_layout(yaxis_tickformat=',.2f')
-                            st.plotly_chart(fig, use_container_width=True)
-                        else:
-                            st.warning("Não foi possível calcular o dividendo por ação (número de ações não disponível).")
-                        
-                        # Tabela com detalhes
+                        # Tabela com detalhes (apenas total)
                         st.subheader("📋 Detalhamento Anual")
-                        display = df_empresa_div[['Ano', 'Total Pago (R$)', 'Numero_Acoes', 'Dividendo por Ação']].copy()
+                        display = df_empresa_div[['Ano', 'Total Pago (R$)']].copy()
                         display['Total Pago (R$)'] = display['Total Pago (R$)'].apply(
-                            lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(x) else "N/A"
-                        )
-                        display['Numero_Acoes'] = display['Numero_Acoes'].apply(
-                            lambda x: formatar_numero_brasil_correto(x, 0) if pd.notna(x) else "N/A"
-                        )
-                        display['Dividendo por Ação'] = display['Dividendo por Ação'].apply(
                             lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(x) else "N/A"
                         )
                         st.dataframe(display, use_container_width=True)
                         
-                        # Estatísticas
+                        # Estatísticas (total e média)
                         total_pago = df_empresa_div['Total Pago (R$)'].sum()
                         media_anual = df_empresa_div['Total Pago (R$)'].mean()
-                        media_dpa = df_empresa_div[df_empresa_div['Dividendo por Ação'].notna()]['Dividendo por Ação'].mean()
                         
-                        col1, col2, col3 = st.columns(3)
+                        col1, col2 = st.columns(2)
                         col1.metric("Total Pago (período)", f"R$ {total_pago:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                         col2.metric("Média Anual (Total)", f"R$ {media_anual:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                        col3.metric("Média por Ação (anos com dados)", f"R$ {media_dpa:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(media_dpa) else "N/A")
                         
-                        # Dividend Yield implícito (último ano disponível)
+                        # Se houver cotação atual, mostrar total pago no último ano
                         ultimo_ano = df_empresa_div['Ano'].max()
-                        ultimo_dpa = df_empresa_div[df_empresa_div['Ano'] == ultimo_ano]['Dividendo por Ação'].iloc[0] if not df_empresa_div.empty else None
-                        if ultimo_dpa and pd.notna(ultimo_dpa):
-                            cotacao = buscar_cotacao_atual(ticker_selecionado)
-                            if cotacao and cotacao['cotacao'] > 0:
-                                dy_implícito = (ultimo_dpa / cotacao['cotacao']) * 100
-                                st.metric(f"Dividend Yield (ano {ultimo_ano})", formatar_percentual_brasil(dy_implícito/100))
+                        ultimo_total = df_empresa_div[df_empresa_div['Ano'] == ultimo_ano]['Total Pago (R$)'].iloc[0] if not df_empresa_div.empty else None
+                        if ultimo_total and ultimo_total > 0:
+                            st.metric(f"Total Pago no último ano ({ultimo_ano})", f"R$ {ultimo_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                     else:
                         st.warning("Não há dados de pagamento de dividendos/JCP nas demonstrações financeiras para esta empresa.")
                 else:
-                    st.warning("Colunas 'Pagamento de Dividendos' e/ou 'Numero_Acoes' não encontradas no arquivo de dados.")
+                    st.warning("Coluna 'Pagamento de Dividendos' não encontrada no arquivo de dados.")
 
         # --- Aba Simulação de Investimento ---
         with tab_simulacao:
