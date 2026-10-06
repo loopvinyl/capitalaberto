@@ -1,3 +1,4 @@
+
 # ==============================================================
 # 📊 APP CAPITAL ABERTO – ANÁLISE COMPLETA DE DEMONSTRAÇÕES FINANCEIRAS
 # Base: capitalaberto.xlsx (gerado pelo script único)
