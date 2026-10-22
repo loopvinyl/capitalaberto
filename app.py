@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import numpy as np
 import os
 import yfinance as yf
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 import locale
 import time
 import re
@@ -26,6 +26,13 @@ CACHE_DIR = ".cache"
 ad.user_cache_dir = lambda *args: CACHE_DIR
 Path(CACHE_DIR).mkdir(exist_ok=True)
 # ==============================
+
+# ==============================
+# FUNÇÃO DE HORÁRIO DE BRASÍLIA (UTC-3)
+# ==============================
+def agora_brasil():
+    """Retorna o datetime atual no fuso horário de Brasília (UTC-3)."""
+    return datetime.now(timezone.utc) - timedelta(hours=3)
 
 # ==============================
 # CONFIGURAÇÃO DE FORMATAÇÃO BRASILEIRA
@@ -100,29 +107,27 @@ def formatar_dataframe_percentual(df, colunas):
 def obter_ticker_yahoo(ticker_base):
     ticker_base = str(ticker_base).strip().upper()
     
-    # Se já vier com número (ex: CPFE3), apenas adiciona .SA
     if re.search(r'\d+$', ticker_base):
         return f"{ticker_base}.SA"
         
     base = re.sub(r'\d+$', '', ticker_base).upper()
-    sufixos = ['3', '4', '5', '6', '11'] # ON, PN, PNA, PNB, Units
+    sufixos = ['3', '4', '5', '6', '11']
     session = curl_requests.Session(impersonate="chrome")
     
     for suf in sufixos:
         ticker_yf = f"{base}{suf}.SA"
         try:
             acao = yf.Ticker(ticker_yf, session=session)
-            # Puxa um histórico curto só para ver se o ticker existe e tem dados
             hist = acao.history(period="5d")
             if not hist.empty:
                 return ticker_yf
         except:
             pass
             
-    return f"{base}.SA" # Fallback
+    return f"{base}.SA"
 
 # ==============================
-# FUNÇÕES DE MERCADO E DIVIDENDOS (com cache, curl_cffi e ticker correto)
+# FUNÇÕES DE MERCADO E DIVIDENDOS (com cache, curl_cffi e horário de Brasília)
 # ==============================
 @st.cache_data(ttl=86400)
 def buscar_cotacao_atual(ticker):
@@ -142,7 +147,7 @@ def buscar_cotacao_atual(ticker):
                 'market_cap': info.get('marketCap'),
                 'sharesOutstanding': info.get('sharesOutstanding'),
                 'volume': info.get('volume'),
-                'data_atualizacao': datetime.now().strftime("%d/%m/%Y %H:%M")
+                'data_atualizacao': agora_brasil().strftime("%d/%m/%Y %H:%M") # <-- CORRIGIDO AQUI
             }
     except:
         pass
@@ -196,11 +201,6 @@ def calcular_estatisticas_dividendos(df_dividendos):
     }
 
 def calcular_tickers_consistentes(df_cvm, anos_verificar=5, minimo_anos_com_pagamento=3):
-    """
-    Usa os dados da DFC (coluna 'Pagamento de Dividendos') para identificar
-    tickers que pagaram dividendos/JCP em pelo menos 'minimo_anos_com_pagamento'
-    dos últimos 'anos_verificar' anos disponíveis no dataset.
-    """
     st.info(f"🔎 **Pré‑filtro:** Buscando tickers com pagamento de dividendos em pelo menos {minimo_anos_com_pagamento} dos últimos {anos_verificar} anos.")
     
     anos_disponiveis = sorted(df_cvm['Ano'].unique(), reverse=True)
@@ -240,7 +240,7 @@ def calcular_ranking_dividendos(tickers_consistentes, df_cvm, periodo_dy_anos=10
     
     for i, ticker in enumerate(tickers_consistentes):
         dados_cotacao = buscar_cotacao_atual(ticker)
-        data_inicio = datetime.now() - timedelta(days=365 * periodo_dy_anos)
+        data_inicio = agora_brasil() - timedelta(days=365 * periodo_dy_anos)
         df_precos = buscar_historico_precos(ticker, "max")
         df_div = buscar_dividendos_historicos(ticker)
         dy_medio = None
@@ -835,7 +835,7 @@ if modo_analise == "🏆 Dados Gerais":
         st.markdown("Simulação de investimento fixo, considerando proventos recebidos.")
         col_data, col_valor = st.columns(2)
         with col_data:
-            data_hoje = date.today()
+            data_hoje = agora_brasil().date()
             data_inicio = st.date_input(
                 "Data de início:",
                 value=data_hoje - timedelta(days=365*5),
@@ -1294,7 +1294,7 @@ elif modo_analise == "📈 Visão por Empresa":
                 cotacao = buscar_cotacao_atual(ticker_selecionado)
                 dy = None
                 if cotacao and cotacao['cotacao'] > 0:
-                    data_limite = datetime.now() - timedelta(days=365)
+                    data_limite = agora_brasil() - timedelta(days=365)
                     div_12m = df_div_yahoo[df_div_yahoo['Data'] >= data_limite]
                     if not div_12m.empty:
                         total_12m = div_12m['Dividendo'].sum()
@@ -1360,7 +1360,7 @@ elif modo_analise == "📈 Visão por Empresa":
             with col_data:
                 data_compra = st.date_input("Data da compra", value=datetime(2015,1,1).date(),
                                             min_value=datetime(2000,1,1).date(),
-                                            max_value=datetime.now().date() - timedelta(days=365))
+                                            max_value=agora_brasil().date() - timedelta(days=365))
             with col_lote:
                 lote = st.selectbox("Tamanho do lote:", [100, 1000, 10000], index=0, format_func=lambda x: f"{x} ações")
             if st.button("Executar Simulação"):
