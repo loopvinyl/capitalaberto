@@ -31,8 +31,8 @@ Path(CACHE_DIR).mkdir(exist_ok=True)
 # FUNÇÃO DE HORÁRIO DE BRASÍLIA (UTC-3)
 # ==============================
 def agora_brasil():
-    """Retorna o datetime atual no fuso horário de Brasília (UTC-3)."""
-    return datetime.now(timezone.utc) - timedelta(hours=3)
+    """Retorna o datetime atual no fuso horário de Brasília (UTC-3), sem timezone para compatibilidade."""
+    return (datetime.now(timezone.utc) - timedelta(hours=3)).replace(tzinfo=None)
 
 # ==============================
 # CONFIGURAÇÃO DE FORMATAÇÃO BRASILEIRA
@@ -147,7 +147,7 @@ def buscar_cotacao_atual(ticker):
                 'market_cap': info.get('marketCap'),
                 'sharesOutstanding': info.get('sharesOutstanding'),
                 'volume': info.get('volume'),
-                'data_atualizacao': agora_brasil().strftime("%d/%m/%Y %H:%M") # <-- CORRIGIDO AQUI
+                'data_atualizacao': agora_brasil().strftime("%d/%m/%Y %H:%M")
             }
     except:
         pass
