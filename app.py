@@ -13,6 +13,7 @@ import yfinance as yf
 from datetime import datetime, timedelta, date
 import locale
 import time
+import re
 
 # ==============================
 # CORREÇÃO PARA STREAMLIT CLOUD
@@ -93,13 +94,40 @@ def formatar_dataframe_percentual(df, colunas):
     return df_formatado
 
 # ==============================
-# FUNÇÕES DE MERCADO E DIVIDENDOS (com cache e curl_cffi)
+# FUNÇÃO PARA DESCOBRIR O TICKER CORRETO NO YAHOO
+# ==============================
+@st.cache_data(ttl=86400)
+def obter_ticker_yahoo(ticker_base):
+    ticker_base = str(ticker_base).strip().upper()
+    
+    # Se já vier com número (ex: CPFE3), apenas adiciona .SA
+    if re.search(r'\d+$', ticker_base):
+        return f"{ticker_base}.SA"
+        
+    base = re.sub(r'\d+$', '', ticker_base).upper()
+    sufixos = ['3', '4', '5', '6', '11'] # ON, PN, PNA, PNB, Units
+    session = curl_requests.Session(impersonate="chrome")
+    
+    for suf in sufixos:
+        ticker_yf = f"{base}{suf}.SA"
+        try:
+            acao = yf.Ticker(ticker_yf, session=session)
+            # Puxa um histórico curto só para ver se o ticker existe e tem dados
+            hist = acao.history(period="5d")
+            if not hist.empty:
+                return ticker_yf
+        except:
+            pass
+            
+    return f"{base}.SA" # Fallback
+
+# ==============================
+# FUNÇÕES DE MERCADO E DIVIDENDOS (com cache, curl_cffi e ticker correto)
 # ==============================
 @st.cache_data(ttl=86400)
 def buscar_cotacao_atual(ticker):
     try:
-        ticker_yf = f"{ticker}.SA"
-        # Usando curl_cffi para impersonar um navegador e evitar bloqueio do Yahoo Finance
+        ticker_yf = obter_ticker_yahoo(ticker)
         session = curl_requests.Session(impersonate="chrome")
         acao = yf.Ticker(ticker_yf, session=session)
         info = acao.info
@@ -123,7 +151,7 @@ def buscar_cotacao_atual(ticker):
 @st.cache_data(ttl=86400)
 def buscar_dividendos_historicos(ticker):
     try:
-        ticker_yf = f"{ticker}.SA"
+        ticker_yf = obter_ticker_yahoo(ticker)
         session = curl_requests.Session(impersonate="chrome")
         acao = yf.Ticker(ticker_yf, session=session)
         dividendos = acao.dividends
@@ -143,7 +171,7 @@ def buscar_dividendos_historicos(ticker):
 @st.cache_data(ttl=86400)
 def buscar_historico_precos(ticker, periodo_maximo="max"):
     try:
-        ticker_yf = f"{ticker}.SA"
+        ticker_yf = obter_ticker_yahoo(ticker)
         session = curl_requests.Session(impersonate="chrome")
         acao = yf.Ticker(ticker_yf, session=session)
         historico = acao.history(period=periodo_maximo)
@@ -175,31 +203,23 @@ def calcular_tickers_consistentes(df_cvm, anos_verificar=5, minimo_anos_com_paga
     """
     st.info(f"🔎 **Pré‑filtro:** Buscando tickers com pagamento de dividendos em pelo menos {minimo_anos_com_pagamento} dos últimos {anos_verificar} anos.")
     
-    # Pegar os últimos N anos disponíveis no dataset
     anos_disponiveis = sorted(df_cvm['Ano'].unique(), reverse=True)
     ultimos_anos = anos_disponiveis[:anos_verificar]
-    
-    # Lista de tickers únicos
     tickers_validos = df_cvm['Ticker'].unique()
     tickers_consistentes = []
     
     progress_bar = st.progress(0, text="Verificando consistência de dividendos...")
     for i, ticker in enumerate(tickers_validos):
-        # Filtrar dados do ticker para os últimos anos
         df_ticker = df_cvm[(df_cvm['Ticker'] == ticker) & (df_cvm['Ano'].isin(ultimos_anos))]
-        
-        # Verificar se há dados de pagamento de dividendos
         if 'Pagamento de Dividendos' not in df_ticker.columns:
             continue
         
-        # Contar anos com pagamento > 0
         pagamentos = df_ticker[df_ticker['Pagamento de Dividendos'].notna() & (df_ticker['Pagamento de Dividendos'] != 0)]
         anos_com_pagamento = pagamentos['Ano'].nunique()
         
         if anos_com_pagamento >= minimo_anos_com_pagamento:
             tickers_consistentes.append(ticker)
         
-        # Progresso
         progress_bar.progress((i+1)/len(tickers_validos), text=f"Verificando {ticker} ({i+1}/{len(tickers_validos)})...")
     
     progress_bar.empty()
@@ -207,16 +227,10 @@ def calcular_tickers_consistentes(df_cvm, anos_verificar=5, minimo_anos_com_paga
     return tickers_consistentes
 
 def calcular_ranking_dividendos(tickers_consistentes, df_cvm, periodo_dy_anos=10):
-    """
-    Calcula o DY médio para os tickers consistentes.
-    O setor é extraído do próprio dataset (SETOR_ATIV), não do Yahoo.
-    """
     dados_ranking = []
     if not tickers_consistentes:
         return pd.DataFrame()
     
-    # Criar mapa de setores a partir do dataset (pegar o setor mais recente disponível)
-    # Pegar o ano mais recente no dataset
     ano_recente = df_cvm['Ano'].max()
     setor_map = df_cvm[df_cvm['Ano'] == ano_recente][['Ticker', 'SETOR_ATIV']].drop_duplicates(subset=['Ticker'])
     setor_map = setor_map.set_index('Ticker')['SETOR_ATIV'].to_dict()
@@ -236,7 +250,6 @@ def calcular_ranking_dividendos(tickers_consistentes, df_cvm, periodo_dy_anos=10
             df_div_filt = df_div[df_div['Data'] >= data_inicio]
             if not df_precos_filt.empty and not df_div_filt.empty:
                 try:
-                    # CORREÇÃO: usar 'YE' em vez de 'Y' (depreciado)
                     precos_anuais = df_precos_filt.resample('YE').last()['Close'].dropna()
                 except:
                     try:
@@ -254,7 +267,6 @@ def calcular_ranking_dividendos(tickers_consistentes, df_cvm, periodo_dy_anos=10
                     dy_medio = np.mean(dy_anuais)
         
         if dados_cotacao is not None:
-            # Usar SETOR_ATIV do dataset (em português), fallback para o Yahoo se não encontrar
             setor = setor_map.get(ticker, dados_cotacao.get('setor', 'N/A'))
             dados_ranking.append({
                 'Ticker': ticker,
@@ -411,20 +423,11 @@ def criar_grafico_comparativo(preco_calculado, cotacao_atual, ticker):
 # ==============================
 @st.cache_data(ttl=3600)
 def buscar_numero_acoes_yahoo(ticker):
-    """
-    Busca o número total de ações em circulação no Yahoo Finance,
-    varrendo todas as classes de ações da B3 (ON, PN, Units).
-    Exemplo: para "CPFE", testa CPFE3.SA, CPFE4.SA, CPFE5.SA, etc.
-    Soma todas as ações encontradas para obter o total da empresa.
-    """
-    import re
     base = re.sub(r'\d+$', '', ticker).upper()
-    
     sufixos = ['3', '4', '5', '6', '7', '10', '11']
     total_acoes = 0
     classes_encontradas = []
     
-    # Criação da sessão para evitar bloqueios no Streamlit Cloud
     session = curl_requests.Session(impersonate="chrome")
     
     for suf in sufixos:
@@ -491,20 +494,17 @@ def load_data():
     df = pd.read_excel(data_path)
     df.columns = [c.strip() for c in df.columns]
 
-    # Normalização
     if 'Pagamento de Dividendos (ou Proventos)' in df.columns:
         df.rename(columns={'Pagamento de Dividendos (ou Proventos)': 'Pagamento de Dividendos'}, inplace=True)
     if 'Patrimônio Líquido Consolidado' not in df.columns and 'Patrimônio Líquido' in df.columns:
         df.rename(columns={'Patrimônio Líquido': 'Patrimônio Líquido Consolidado'}, inplace=True)
 
-    # Garantir que Ticker esteja preenchido (fallback para CD_CVM)
     if 'Ticker' in df.columns:
         df['Ticker'] = df['Ticker'].fillna('').astype(str)
         df.loc[df['Ticker'] == '', 'Ticker'] = 'CD_' + df.loc[df['Ticker'] == '', 'CD_CVM'].astype(str)
     else:
         df['Ticker'] = 'CD_' + df['CD_CVM'].astype(str)
 
-    # Garantir que DENOM_CIA exista
     if 'DENOM_CIA' not in df.columns:
         if 'DENOM_SOCIAL' in df.columns:
             df['DENOM_CIA'] = df['DENOM_SOCIAL']
@@ -514,7 +514,6 @@ def load_data():
             df['DENOM_CIA'] = df['Ticker']
         df['DENOM_CIA'] = df['DENOM_CIA'].fillna(df['Ticker'])
 
-    # Identificar bancos
     if 'SETOR_ATIV' in df.columns:
         df['is_bank'] = df['SETOR_ATIV'].str.contains('Bancos|Financeiro|Instituição Financeira', case=False, na=False)
     else:
@@ -522,7 +521,6 @@ def load_data():
 
     df = df.sort_values(['Ticker', 'Ano']).reset_index(drop=True)
 
-    # Cálculo de médias e indicadores
     df["Ativo Médio"] = (df["Ativo Total"] + df.groupby("Ticker")["Ativo Total"].shift(1)) / 2
     df["PL Médio"] = (df["Patrimônio Líquido Consolidado"] + df.groupby("Ticker")["Patrimônio Líquido Consolidado"].shift(1)) / 2
 
@@ -655,7 +653,6 @@ def load_data():
 st.set_page_config(page_title="Dashboard Capital Aberto", layout="wide")
 st.title("📊 Dashboard Capital Aberto")
 
-# Carregar dados
 df = load_data()
 
 # ==============================
@@ -677,7 +674,6 @@ modo_analise = st.sidebar.radio(
 anos_disponiveis = sorted(df["Ano"].unique(), reverse=True)
 ano_selecionado = st.sidebar.selectbox("Ano:", anos_disponiveis)
 
-# Lista de tickers para o seletor (apenas ticker)
 tickers_disponiveis = sorted(df["Ticker"].dropna().unique())
 
 if modo_analise == "📈 Visão por Empresa":
@@ -691,7 +687,6 @@ elif modo_analise == "🏭 Análise Setorial":
 else:  # Dados Gerais
     df_filtrado = df[df["Ano"] == ano_selecionado]
 
-# Variável global para tickers consistentes (será preenchida se ativado)
 TICKERS_CONSISTENTES = []
 if executar_pre_filtro:
     TICKERS_CONSISTENTES = calcular_tickers_consistentes(df)
@@ -716,7 +711,6 @@ if modo_analise == "🏆 Dados Gerais":
 
     tabs = st.tabs(["📈 Rentabilidade", "💰 Lucro/Receita/Caixa", "🏛️ Solidez", "📊 Eficiência", "👑 Dividendos Consistentes", "🚀 Maior Retorno"])
 
-    # --- Aba 1: Rentabilidade ---
     with tabs[0]:
         col1, col2 = st.columns(2)
         with col1:
@@ -738,7 +732,6 @@ if modo_analise == "🏆 Dados Gerais":
         if not rent.empty:
             st.dataframe(formatar_dataframe_percentual(rent, ['ROE', 'ROA', 'ROI', 'Margem Líquida']), use_container_width=True)
 
-    # --- Aba 2: Lucro/Receita/Caixa ---
     with tabs[1]:
         st.subheader("🥇 Top 13 Caixa Operacional")
         fco = "Caixa Líquido Atividades Operacionais"
@@ -773,7 +766,6 @@ if modo_analise == "🏆 Dados Gerais":
                 rec["Receita"] = rec["Receita de Venda de Bens e/ou Serviços"].apply(formatar_moeda_brasil_correta)
                 st.dataframe(rec[["Ticker", "SETOR_ATIV", "Receita"]], use_container_width=True)
 
-    # --- Aba 3: Solidez ---
     with tabs[2]:
         col1, col2 = st.columns(2)
         with col1:
@@ -794,7 +786,6 @@ if modo_analise == "🏆 Dados Gerais":
                 fig.update_layout(yaxis_tickformat=',.2%')
                 st.plotly_chart(fig, use_container_width=True)
 
-    # --- Aba 4: Eficiência ---
     with tabs[3]:
         st.subheader("Top 15 Margem Líquida")
         margem = df_filtrado[df_filtrado["Margem Líquida"].notna()].nlargest(15, "Margem Líquida")[["Ticker", "SETOR_ATIV", "Margem Líquida"]]
@@ -810,7 +801,6 @@ if modo_analise == "🏆 Dados Gerais":
             fig.update_layout(yaxis_tickformat=',.2%')
             st.plotly_chart(fig, use_container_width=True)
 
-    # --- Aba 5: Dividendos Consistentes (CORRIGIDA) ---
     with tabs[4]:
         st.subheader("👑 Top 10 - Dividend Yield Médio (Empresas Consistentes)")
         if executar_pre_filtro:
@@ -840,7 +830,6 @@ if modo_analise == "🏆 Dados Gerais":
         else:
             st.info("Pré‑filtro de dividendos consistentes desativado. Ative na barra lateral.")
 
-    # --- Aba 6: Maior Retorno ---
     with tabs[5]:
         st.header("🚀 Top 13 - Maior Retorno Total (Valorização + Dividendos)")
         st.markdown("Simulação de investimento fixo, considerando proventos recebidos.")
@@ -912,7 +901,6 @@ elif modo_analise == "📈 Visão por Empresa":
 
         tab_atual, tab_evolucao, tab_dividendos, tab_simulacao = st.tabs(["📊 Análise do Ano", "📈 Evolução Temporal", "💰 Dividendos", "💵 Simulação Investimento"])
 
-        # --- Aba Análise do Ano ---
         with tab_atual:
             st.subheader(f"Ano {ano_selecionado}")
             if not df_filtrado.empty:
@@ -980,19 +968,14 @@ elif modo_analise == "📈 Visão por Empresa":
                     if is_bank:
                         st.subheader("🏦 Valuation para Bancos")
                         ra = df_filtrado['Resultado Abrangente do Período'].iloc[0] if 'Resultado Abrangente do Período' in df_filtrado.columns else None
-                        
-                        # Fallback: usar Lucro Líquido se Resultado Abrangente estiver vazio
                         if pd.isna(ra) or ra == 0:
                             ra = df_filtrado['Lucro/Prejuízo Consolidado do Período'].iloc[0] if 'Lucro/Prejuízo Consolidado do Período' in df_filtrado.columns else None
                             if ra:
                                 st.info("ℹ️ Usando Lucro Líquido como fallback (Resultado Abrangente não disponível).")
                         
                         pl_medio = df_filtrado['PL Médio'].iloc[0] if 'PL Médio' in df_filtrado.columns else None
-                        
-                        # SEMPRE buscar número de ações no Yahoo Finance (versão corrigida)
                         num_acoes = buscar_numero_acoes_yahoo(ticker_selecionado)
                         
-                        # Fallback: usar o valor do dataset se Yahoo falhar
                         if not num_acoes:
                             num_acoes = df_filtrado['Numero_Acoes'].iloc[0] if 'Numero_Acoes' in df_filtrado.columns and pd.notna(df_filtrado['Numero_Acoes'].iloc[0]) else None
                             if num_acoes:
@@ -1053,11 +1036,7 @@ elif modo_analise == "📈 Visão por Empresa":
                                 val_emp = calcular_valuation_lucro_economico_selic(le, selic)
                                 if val_emp:
                                     val_emp_reais = val_emp * 1000
-                                    
-                                    # SEMPRE buscar número de ações no Yahoo Finance (versão corrigida)
                                     num_acoes = buscar_numero_acoes_yahoo(ticker_selecionado)
-                                    
-                                    # Fallback: usar o valor do dataset se Yahoo falhar
                                     if not num_acoes:
                                         num_acoes = df_filtrado['Numero_Acoes'].iloc[0] if 'Numero_Acoes' in df_filtrado.columns and pd.notna(df_filtrado['Numero_Acoes'].iloc[0]) else None
                                         if num_acoes:
@@ -1176,7 +1155,6 @@ elif modo_analise == "📈 Visão por Empresa":
                             data[c] = formatar_moeda_brasil_correta(val) if pd.notna(val) else "N/A"
                     st.dataframe(pd.DataFrame.from_dict(data, orient='index', columns=['Valor']), use_container_width=True)
 
-        # --- Aba Evolução Temporal ---
         with tab_evolucao:
             st.subheader("Evolução Temporal")
             if len(df_empresa_todos_anos) > 1:
@@ -1300,15 +1278,12 @@ elif modo_analise == "📈 Visão por Empresa":
             else:
                 st.info("São necessários dados de múltiplos anos.")
 
-        # --- Aba Dividendos (CORRIGIDA) ---
         with tab_dividendos:
             st.subheader("💰 Dividendos / JCP Pagos")
 
-            # 1. Tentar buscar do Yahoo Finance (para exibir os dados históricos, se disponível)
             df_div_yahoo = buscar_dividendos_historicos(ticker_selecionado)
 
             if df_div_yahoo is not None and not df_div_yahoo.empty:
-                # Dados do Yahoo – exibir como antes
                 stats = calcular_estatisticas_dividendos(df_div_yahoo)
                 st.subheader(f"📊 Histórico de Dividendos (Yahoo) - {ticker_selecionado}")
                 col1, col2, col3, col4 = st.columns(4)
@@ -1343,7 +1318,6 @@ elif modo_analise == "📈 Visão por Empresa":
                 st.dataframe(display.sort_values('Data (Ex)', ascending=False), use_container_width=True)
 
             else:
-                # 2. Fallback: Dados da DFC – MOSTRAR APENAS TOTAIS
                 st.info("ℹ️ Dados de dividendos do Yahoo Finance não disponíveis. Exibindo valores totais pagos conforme a DFC.")
                 
                 if 'Pagamento de Dividendos' in df_empresa_todos_anos.columns:
@@ -1380,7 +1354,6 @@ elif modo_analise == "📈 Visão por Empresa":
                 else:
                     st.warning("Coluna 'Pagamento de Dividendos' não encontrada no arquivo de dados.")
 
-        # --- Aba Simulação de Investimento ---
         with tab_simulacao:
             st.subheader("💵 Simulação de Investimento por Lotes")
             col_data, col_lote = st.columns(2)
