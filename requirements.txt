@@ -4,3 +4,5 @@ plotly>=5.14.0
 numpy>=1.24.0
 yfinance>=1.0
 openpyxl>=3.1.0
+appdirs>=1.4.4
+curl_cffi>=0.6.0
