@@ -1,4 +1,3 @@
-
 # ==============================================================
 # 📊 APP CAPITAL ABERTO – ANÁLISE COMPLETA DE DEMONSTRAÇÕES FINANCEIRAS
 # Base: capitalaberto.xlsx (gerado pelo script único)
@@ -14,6 +13,18 @@ import yfinance as yf
 from datetime import datetime, timedelta, date
 import locale
 import time
+
+# ==============================
+# CORREÇÃO PARA STREAMLIT CLOUD
+# ==============================
+import appdirs as ad
+from pathlib import Path
+from curl_cffi import requests as curl_requests
+
+CACHE_DIR = ".cache"
+ad.user_cache_dir = lambda *args: CACHE_DIR
+Path(CACHE_DIR).mkdir(exist_ok=True)
+# ==============================
 
 # ==============================
 # CONFIGURAÇÃO DE FORMATAÇÃO BRASILEIRA
@@ -82,13 +93,15 @@ def formatar_dataframe_percentual(df, colunas):
     return df_formatado
 
 # ==============================
-# FUNÇÕES DE MERCADO E DIVIDENDOS (com cache)
+# FUNÇÕES DE MERCADO E DIVIDENDOS (com cache e curl_cffi)
 # ==============================
 @st.cache_data(ttl=86400)
 def buscar_cotacao_atual(ticker):
     try:
         ticker_yf = f"{ticker}.SA"
-        acao = yf.Ticker(ticker_yf)
+        # Usando curl_cffi para impersonar um navegador e evitar bloqueio do Yahoo Finance
+        session = curl_requests.Session(impersonate="chrome")
+        acao = yf.Ticker(ticker_yf, session=session)
         info = acao.info
         cotacao = info.get('regularMarketPrice') or info.get('currentPrice')
         if cotacao and cotacao > 0:
@@ -111,7 +124,8 @@ def buscar_cotacao_atual(ticker):
 def buscar_dividendos_historicos(ticker):
     try:
         ticker_yf = f"{ticker}.SA"
-        acao = yf.Ticker(ticker_yf)
+        session = curl_requests.Session(impersonate="chrome")
+        acao = yf.Ticker(ticker_yf, session=session)
         dividendos = acao.dividends
         if dividendos.empty:
             return None
@@ -130,7 +144,8 @@ def buscar_dividendos_historicos(ticker):
 def buscar_historico_precos(ticker, periodo_maximo="max"):
     try:
         ticker_yf = f"{ticker}.SA"
-        acao = yf.Ticker(ticker_yf)
+        session = curl_requests.Session(impersonate="chrome")
+        acao = yf.Ticker(ticker_yf, session=session)
         historico = acao.history(period=periodo_maximo)
         if historico.empty:
             return None
@@ -409,10 +424,13 @@ def buscar_numero_acoes_yahoo(ticker):
     total_acoes = 0
     classes_encontradas = []
     
+    # Criação da sessão para evitar bloqueios no Streamlit Cloud
+    session = curl_requests.Session(impersonate="chrome")
+    
     for suf in sufixos:
         ticker_completo = f"{base}{suf}.SA"
         try:
-            acao = yf.Ticker(ticker_completo)
+            acao = yf.Ticker(ticker_completo, session=session)
             info = acao.info
             shares = info.get('sharesOutstanding')
             if shares and shares > 0:
@@ -423,7 +441,7 @@ def buscar_numero_acoes_yahoo(ticker):
     
     if not classes_encontradas:
         try:
-            acao = yf.Ticker(f"{base}.SA")
+            acao = yf.Ticker(f"{base}.SA", session=session)
             info = acao.info
             shares = info.get('sharesOutstanding')
             if shares and shares > 0:
@@ -433,7 +451,7 @@ def buscar_numero_acoes_yahoo(ticker):
     
     if not classes_encontradas and not total_acoes:
         try:
-            acao = yf.Ticker(f"{ticker}.SA")
+            acao = yf.Ticker(f"{ticker}.SA", session=session)
             info = acao.info
             shares = info.get('sharesOutstanding')
             if shares and shares > 0:
