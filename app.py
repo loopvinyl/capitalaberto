@@ -1008,8 +1008,11 @@ elif modo_analise == "📈 Visão por Empresa":
                     else:
                         st.metric("WACC", "N/A (Banco)")
                 with col5:
-                    # ✅ Caixa Operacional: se o ano selecionado não tem, mostra
-                    # o valor com selo "📅 Reportado em {ano}".
+                    # ============================================================
+                    # ✅ AJUSTE: card principal mostra "Não reportado" quando
+                    #    o ano selecionado não tem FCO (igual aos demais indicadores).
+                    #    O valor de outro ano aparece ABAIXO, como observação (caption).
+                    # ============================================================
                     val_caixa, _, ano_caixa = buscar_caixa_operacional_fallback(df_empresa_todos_anos, ano_selecionado)
                     if val_caixa is None:
                         st.metric(
@@ -1020,12 +1023,8 @@ elif modo_analise == "📈 Visão por Empresa":
                     elif ano_caixa == ano_selecionado:
                         st.metric("Caixa Operacional", formatar_moeda_brasil_correta(val_caixa))
                     else:
-                        st.metric(
-                            "Caixa Operacional",
-                            formatar_moeda_brasil_correta(val_caixa),
-                            delta=f"📅 Reportado em {ano_caixa}",
-                            delta_color="off"
-                        )
+                        st.metric("Caixa Operacional", "Não reportado")
+                        st.caption(f"📅 Reportado em {ano_caixa}: **{formatar_moeda_brasil_correta(val_caixa)}**")
 
                 if not is_bank:
                     st.subheader("🔍 Verificação: Lucro Econômico 1 vs 2")
@@ -1220,7 +1219,11 @@ elif modo_analise == "📈 Visão por Empresa":
 
                 with sub_tabs[5]:
                     st.subheader("💵 Fluxo de Caixa Operacional")
-                    # ✅ Mesmo tratamento do card principal: mostra valor com selo do ano
+                    # ============================================================
+                    # ✅ AJUSTE: mesma lógica do card principal — valor principal
+                    #    é "Não reportado" quando não há dado no ano selecionado;
+                    #    o valor de outro ano aparece como observação abaixo.
+                    # ============================================================
                     val_caixa, _, ano_caixa = buscar_caixa_operacional_fallback(df_empresa_todos_anos, ano_selecionado)
                     if val_caixa is None:
                         st.metric(f"Caixa Operacional ({ano_selecionado})", "Não reportado")
@@ -1237,13 +1240,10 @@ elif modo_analise == "📈 Visão por Empresa":
                                 col3.metric("Caixa/EBITDA", f"{(val_caixa / ebitda) * 100:.1f}%")
                         st.success("✅ Geração Positiva" if val_caixa > 0 else "⚠️ Geração Negativa")
                     else:
+                        # Valor principal = "Não reportado"; valor de outro ano vai como observação
                         col1, col2, col3 = st.columns(3)
-                        col1.metric(
-                            "Caixa Operacional",
-                            formatar_moeda_brasil_correta(val_caixa),
-                            delta=f"📅 Reportado em {ano_caixa}",
-                            delta_color="off"
-                        )
+                        col1.metric(f"Caixa Operacional ({ano_selecionado})", "Não reportado")
+                        st.caption(f"📅 Reportado em {ano_caixa}: **{formatar_moeda_brasil_correta(val_caixa)}**")
                         lucro = df_filtrado["Lucro/Prejuízo Consolidado do Período"].iloc[0] if (not df_filtrado.empty and pd.notna(df_filtrado["Lucro/Prejuízo Consolidado do Período"].iloc[0])) else 0
                         if lucro != 0:
                             col2.metric("Caixa/Lucro", f"{(val_caixa / lucro) * 100:.1f}%", help=f"Usa FCO reportado em {ano_caixa}.")
@@ -1251,7 +1251,7 @@ elif modo_analise == "📈 Visão por Empresa":
                             ebitda = df_filtrado["EBITDA"].iloc[0] if ("EBITDA" in df_filtrado.columns and not df_filtrado.empty and pd.notna(df_filtrado["EBITDA"].iloc[0])) else 0
                             if ebitda != 0:
                                 col3.metric("Caixa/EBITDA", f"{(val_caixa / ebitda) * 100:.1f}%", help=f"Usa FCO reportado em {ano_caixa}.")
-                        st.info(f"ℹ️ **FCO não reportado em {ano_selecionado}.** Exibindo valor reportado em **{ano_caixa}**. " +
+                        st.info(f"ℹ️ **FCO não reportado em {ano_selecionado}.** Valor mais recente disponível: **{ano_caixa}** = {formatar_moeda_brasil_correta(val_caixa)}. " +
                                 ("Geração Positiva ✅" if val_caixa > 0 else "Geração Negativa ⚠️"))
 
                 with sub_tabs[6]:
