@@ -667,6 +667,56 @@ def load_data():
     return df
 
 # ==============================
+# FUNÇÃO AUXILIAR: BUSCAR CAIXA OPERACIONAL COM FALLBACK
+# ==============================
+def buscar_caixa_operacional_fallback(df_empresa, ano_selecionado):
+    """
+    Busca o valor de Caixa Líquido das Atividades Operacionais com fallback:
+    1. Tenta colunas alternativas no ano selecionado
+    2. Tenta anos anteriores (mais recente primeiro)
+    3. Retorna (valor, coluna_usada, ano_usado) ou (None, None, None)
+    """
+    colunas_alternativas = [
+        'Caixa Líquido Atividades Operacionais',
+        'Caixa Líquido das Atividades Operacionais',
+        'Caixa Líquido Atividades Operacionais (FCO)',
+        'Caixa Gerado nas Operações',
+        'Fluxo de Caixa Operacional',
+        'Caixa Líquido Atividades Operacionais Consolidado',
+    ]
+
+    if df_empresa is None or df_empresa.empty:
+        return None, None, None
+
+    colunas_existentes = [c for c in colunas_alternativas if c in df_empresa.columns]
+    if not colunas_existentes:
+        return None, None, None
+
+    # 1) Tentar o ano selecionado primeiro
+    df_ano = df_empresa[df_empresa['Ano'] == ano_selecionado]
+    if not df_ano.empty:
+        for col in colunas_existentes:
+            try:
+                val = df_ano[col].iloc[0]
+                if pd.notna(val):
+                    return val, col, int(ano_selecionado)
+            except:
+                pass
+
+    # 2) Buscar no último ano disponível (mais recente com valor)
+    try:
+        df_sorted = df_empresa.sort_values('Ano', ascending=False)
+        for _, row in df_sorted.iterrows():
+            for col in colunas_existentes:
+                val = row[col]
+                if pd.notna(val):
+                    return val, col, int(row['Ano'])
+    except:
+        pass
+
+    return None, None, None
+
+# ==============================
 # CONFIGURAÇÃO DO STREAMLIT
 # ==============================
 st.set_page_config(page_title="Dashboard Capital Aberto", layout="wide")
@@ -959,11 +1009,26 @@ elif modo_analise == "📈 Visão por Empresa":
                     else:
                         st.metric("WACC", "N/A (Banco)")
                 with col5:
-                    if 'Caixa Líquido Atividades Operacionais' in df_filtrado.columns:
-                        val = df_filtrado['Caixa Líquido Atividades Operacionais'].iloc[0]
-                        st.metric("Caixa Operacional", formatar_moeda_brasil_correta(val) if pd.notna(val) else "N/A")
+                    # ============================================================
+                    # ✅ AJUSTE: Caixa Operacional com fallback (evita N/A)
+                    # ============================================================
+                    val_caixa, _, ano_caixa = buscar_caixa_operacional_fallback(df_empresa_todos_anos, ano_selecionado)
+                    if val_caixa is not None:
+                        if ano_caixa == ano_selecionado:
+                            st.metric("Caixa Operacional", formatar_moeda_brasil_correta(val_caixa))
+                        else:
+                            st.metric(
+                                "Caixa Operacional",
+                                formatar_moeda_brasil_correta(val_caixa),
+                                delta=f"📅 Ref. {ano_caixa}",
+                                delta_color="off"
+                            )
                     else:
-                        st.metric("Caixa Operacional*", "N/A")
+                        st.metric(
+                            "Caixa Operacional",
+                            "Não reportado",
+                            help="A empresa não reportou fluxo de caixa operacional em nenhum ano disponível na base."
+                        )
 
                 if not is_bank:
                     st.subheader("🔍 Verificação: Lucro Econômico 1 vs 2")
@@ -1158,23 +1223,33 @@ elif modo_analise == "📈 Visão por Empresa":
 
                 with sub_tabs[5]:
                     st.subheader("💵 Fluxo de Caixa Operacional")
-                    if 'Caixa Líquido Atividades Operacionais' in df_filtrado.columns:
-                        val = df_filtrado['Caixa Líquido Atividades Operacionais'].iloc[0]
-                        if pd.notna(val):
-                            col1, col2, col3 = st.columns(3)
-                            col1.metric("Caixa Operacional", formatar_moeda_brasil_correta(val))
-                            lucro = df_filtrado["Lucro/Prejuízo Consolidado do Período"].iloc[0] if pd.notna(df_filtrado["Lucro/Prejuízo Consolidado do Período"].iloc[0]) else 0
-                            if lucro != 0:
-                                col2.metric("Caixa/Lucro", f"{(val / lucro) * 100:.1f}%")
-                            if not is_bank:
-                                ebitda = df_filtrado["EBITDA"].iloc[0] if "EBITDA" in df_filtrado.columns and pd.notna(df_filtrado["EBITDA"].iloc[0]) else 0
-                                if ebitda != 0:
-                                    col3.metric("Caixa/EBITDA", f"{(val / ebitda) * 100:.1f}%")
-                            st.success("✅ Geração Positiva" if val > 0 else "⚠️ Geração Negativa")
+                    # ============================================================
+                    # ✅ AJUSTE: usa o fallback também na sub-aba Fluxo de Caixa
+                    # ============================================================
+                    val_caixa, col_caixa, ano_caixa = buscar_caixa_operacional_fallback(df_empresa_todos_anos, ano_selecionado)
+                    if val_caixa is not None:
+                        col1, col2, col3 = st.columns(3)
+                        if ano_caixa == ano_selecionado:
+                            col1.metric("Caixa Operacional", formatar_moeda_brasil_correta(val_caixa))
                         else:
-                            st.warning("Dados não disponíveis para este ano.")
+                            col1.metric(
+                                "Caixa Operacional",
+                                formatar_moeda_brasil_correta(val_caixa),
+                                delta=f"📅 Ref. {ano_caixa}",
+                                delta_color="off"
+                            )
+                        lucro = df_filtrado["Lucro/Prejuízo Consolidado do Período"].iloc[0] if (not df_filtrado.empty and pd.notna(df_filtrado["Lucro/Prejuízo Consolidado do Período"].iloc[0])) else 0
+                        if lucro != 0:
+                            col2.metric("Caixa/Lucro", f"{(val_caixa / lucro) * 100:.1f}%")
+                        if not is_bank:
+                            ebitda = df_filtrado["EBITDA"].iloc[0] if ("EBITDA" in df_filtrado.columns and not df_filtrado.empty and pd.notna(df_filtrado["EBITDA"].iloc[0])) else 0
+                            if ebitda != 0:
+                                col3.metric("Caixa/EBITDA", f"{(val_caixa / ebitda) * 100:.1f}%")
+                        if ano_caixa != ano_selecionado:
+                            st.info(f"ℹ️ O valor exibido refere-se ao ano de **{ano_caixa}**, pois não há dados de Caixa Operacional disponíveis para **{ano_selecionado}**.")
+                        st.success("✅ Geração Positiva" if val_caixa > 0 else "⚠️ Geração Negativa")
                     else:
-                        st.warning("Coluna não encontrada.")
+                        st.info("ℹ️ A empresa não reportou dados de Fluxo de Caixa Operacional em nenhum ano da base.")
 
                 with sub_tabs[6]:
                     st.subheader("Dados Brutos")
