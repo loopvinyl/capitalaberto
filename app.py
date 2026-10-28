@@ -35,6 +35,16 @@ def agora_brasil():
     return (datetime.now(timezone.utc) - timedelta(hours=3)).replace(tzinfo=None)
 
 # ==============================
+# FUNÇÃO PARA VERIFICAR SE A B3 ESTÁ ABERTA
+# ==============================
+def bolsa_aberta_agora():
+    """Verifica se a B3 está aberta no momento (dias úteis, 10h às 17h, horário de Brasília)."""
+    agora = agora_brasil()
+    if agora.weekday() >= 5:  # Sábado (5) ou Domingo (6)
+        return False
+    return 10 <= agora.hour < 17
+
+# ==============================
 # CONFIGURAÇÃO DE FORMATAÇÃO BRASILEIRA
 # ==============================
 def configurar_locale_brasil():
@@ -137,9 +147,18 @@ def buscar_cotacao_atual(ticker):
         acao = yf.Ticker(ticker_yf, session=session)
         info = acao.info
         cotacao = info.get('regularMarketPrice') or info.get('currentPrice')
+        # Fallback para fechamento anterior quando não há preço atual de mercado
+        # (evita retornar None quando a bolsa está fechada)
+        if not cotacao or cotacao <= 0:
+            cotacao = (
+                info.get('regularMarketPreviousClose')
+                or info.get('previousClose')
+                or info.get('regularMarketPrice')
+            )
         if cotacao and cotacao > 0:
             return {
                 'cotacao': cotacao,
+                'mercado_aberto': bolsa_aberta_agora(),
                 'moeda': info.get('currency', 'BRL'),
                 'nome': info.get('longName', ticker),
                 'setor': info.get('sector', 'N/A'),
@@ -892,11 +911,30 @@ elif modo_analise == "📈 Visão por Empresa":
         with col2:
             st.metric("Setor", df_filtrado["SETOR_ATIV"].iloc[0] if not df_filtrado.empty else "N/A")
         with col3:
-            if dados_cotacao:
-                st.metric("Cotação Atual", f"R$ {dados_cotacao['cotacao']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
-                         delta=f"Atualizado: {dados_cotacao['data_atualizacao']}")
+            # ============================================================
+            # ✅ AJUSTE: exibe "Bolsa fechada" quando a B3 estiver fechada
+            # ============================================================
+            mercado_aberto = bolsa_aberta_agora()
+            if dados_cotacao and dados_cotacao.get('cotacao'):
+                valor_fmt = f"R$ {dados_cotacao['cotacao']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                if mercado_aberto:
+                    st.metric(
+                        "Cotação Atual",
+                        valor_fmt,
+                        delta=f"Atualizado: {dados_cotacao['data_atualizacao']}"
+                    )
+                else:
+                    st.metric(
+                        "Cotação Atual",
+                        valor_fmt,
+                        delta="🔴 Bolsa fechada (último fechamento)",
+                        delta_color="off"
+                    )
             else:
-                st.metric("Cotação", "N/A")
+                if not mercado_aberto:
+                    st.metric("Cotação Atual", "🔴 Bolsa fechada")
+                else:
+                    st.metric("Cotação", "N/A")
         st.divider()
 
         tab_atual, tab_evolucao, tab_dividendos, tab_simulacao = st.tabs(["📊 Análise do Ano", "📈 Evolução Temporal", "💰 Dividendos", "💵 Simulação Investimento"])
