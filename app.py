@@ -95,7 +95,7 @@ def formatar_numero_brasil_correto(valor, casas_decimais=0):
 
 def formatar_percentual_brasil(valor, casas_decimais=2):
     if valor is None or pd.isna(valor):
-        return "N/A"
+        return "Não reportado"
     try:
         return f"{valor:.{casas_decimais}%}".replace(".", ",")
     except:
@@ -106,7 +106,7 @@ def formatar_dataframe_percentual(df, colunas):
     for coluna in colunas:
         if coluna in df_formatado.columns:
             df_formatado[coluna] = df_formatado[coluna].apply(
-                lambda x: formatar_percentual_brasil(x, 2) if pd.notna(x) else "N/A"
+                lambda x: formatar_percentual_brasil(x, 2) if pd.notna(x) else "Não reportado"
             )
     return df_formatado
 
@@ -147,8 +147,6 @@ def buscar_cotacao_atual(ticker):
         acao = yf.Ticker(ticker_yf, session=session)
         info = acao.info
         cotacao = info.get('regularMarketPrice') or info.get('currentPrice')
-        # Fallback para fechamento anterior quando não há preço atual de mercado
-        # (evita retornar None quando a bolsa está fechada)
         if not cotacao or cotacao <= 0:
             cotacao = (
                 info.get('regularMarketPreviousClose')
@@ -884,7 +882,7 @@ if modo_analise == "🏆 Dados Gerais":
                         top10.index = top10.index + 1
                         top10 = top10.rename(columns={'DY Médio (10A)': 'DY Médio (10 Anos)'})
                         display = top10.copy()
-                        display['DY Médio (10 Anos)'] = display['DY Médio (10 Anos)'].apply(lambda x: formatar_percentual_brasil(x/100, 2) if pd.notna(x) else 'N/A')
+                        display['DY Médio (10 Anos)'] = display['DY Médio (10 Anos)'].apply(lambda x: formatar_percentual_brasil(x/100, 2) if pd.notna(x) else 'Não reportado')
                         display['Cotação Atual'] = display['Cotação Atual'].apply(lambda x: f"R$ {formatar_numero_brasil_correto(x, 2)}")
                         st.dataframe(display, use_container_width=True)
                         fig = px.bar(top10, x="Ticker", y="DY Médio (10 Anos)", color="Setor", title="DY Médio dos Últimos 10 Anos")
@@ -935,7 +933,7 @@ if modo_analise == "🏆 Dados Gerais":
                     'Ganho Total': 'Ganho Total (R$)'
                 })
                 display = display[['Ticker', 'Setor', 'Retorno Total (%)', 'Investido (R$)', 'Valor Atual (R$)', 'Proventos (R$)', 'Ganho Total (R$)']]
-                display['Retorno Total (%)'] = display['Retorno Total (%)'].apply(lambda x: formatar_percentual_brasil(x/100, 2) if pd.notna(x) else 'N/A')
+                display['Retorno Total (%)'] = display['Retorno Total (%)'].apply(lambda x: formatar_percentual_brasil(x/100, 2) if pd.notna(x) else 'Não reportado')
                 display['Investido (R$)'] = display['Investido (R$)'].apply(lambda x: formatar_numero_brasil_correto(x, 0))
                 display['Valor Atual (R$)'] = display['Valor Atual (R$)'].apply(lambda x: formatar_numero_brasil_correto(x, 2))
                 display['Proventos (R$)'] = display['Proventos (R$)'].apply(lambda x: formatar_numero_brasil_correto(x, 2))
@@ -961,9 +959,6 @@ elif modo_analise == "📈 Visão por Empresa":
         with col2:
             st.metric("Setor", df_filtrado["SETOR_ATIV"].iloc[0] if not df_filtrado.empty else "N/A")
         with col3:
-            # ============================================================
-            # ✅ AJUSTE: exibe "Bolsa fechada" quando a B3 estiver fechada
-            # ============================================================
             mercado_aberto = bolsa_aberta_agora()
             if dados_cotacao and dados_cotacao.get('cotacao'):
                 valor_fmt = f"R$ {dados_cotacao['cotacao']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -995,39 +990,41 @@ elif modo_analise == "📈 Visão por Empresa":
                 is_bank = df_filtrado['is_bank'].iloc[0] if 'is_bank' in df_filtrado.columns else False
                 col1, col2, col3, col4, col5 = st.columns(5)
                 with col1:
-                    st.metric("ROE", formatar_percentual_brasil(df_filtrado["ROE"].iloc[0], 2) if pd.notna(df_filtrado["ROE"].iloc[0]) else "-")
+                    v = df_filtrado["ROE"].iloc[0]
+                    st.metric("ROE", formatar_percentual_brasil(v, 2) if pd.notna(v) else "Não reportado")
                 with col2:
-                    st.metric("ROA", formatar_percentual_brasil(df_filtrado["ROA"].iloc[0], 2) if pd.notna(df_filtrado["ROA"].iloc[0]) else "-")
+                    v = df_filtrado["ROA"].iloc[0]
+                    st.metric("ROA", formatar_percentual_brasil(v, 2) if pd.notna(v) else "Não reportado")
                 with col3:
                     if not is_bank:
-                        st.metric("ROI", formatar_percentual_brasil(df_filtrado["ROI"].iloc[0], 2) if pd.notna(df_filtrado["ROI"].iloc[0]) else "-")
+                        v = df_filtrado["ROI"].iloc[0]
+                        st.metric("ROI", formatar_percentual_brasil(v, 2) if pd.notna(v) else "Não reportado")
                     else:
                         st.metric("ROI", "N/A (Banco)")
                 with col4:
                     if not is_bank:
-                        st.metric("WACC", formatar_percentual_brasil(df_filtrado["wacc"].iloc[0], 2) if pd.notna(df_filtrado["wacc"].iloc[0]) else "-")
+                        v = df_filtrado["wacc"].iloc[0]
+                        st.metric("WACC", formatar_percentual_brasil(v, 2) if pd.notna(v) else "Não reportado")
                     else:
                         st.metric("WACC", "N/A (Banco)")
                 with col5:
-                    # ============================================================
-                    # ✅ AJUSTE: Caixa Operacional com fallback (evita N/A)
-                    # ============================================================
+                    # ✅ Caixa Operacional: se o ano selecionado não tem, mostra
+                    # o valor com selo "📅 Reportado em {ano}".
                     val_caixa, _, ano_caixa = buscar_caixa_operacional_fallback(df_empresa_todos_anos, ano_selecionado)
-                    if val_caixa is not None:
-                        if ano_caixa == ano_selecionado:
-                            st.metric("Caixa Operacional", formatar_moeda_brasil_correta(val_caixa))
-                        else:
-                            st.metric(
-                                "Caixa Operacional",
-                                formatar_moeda_brasil_correta(val_caixa),
-                                delta=f"📅 Ref. {ano_caixa}",
-                                delta_color="off"
-                            )
-                    else:
+                    if val_caixa is None:
                         st.metric(
                             "Caixa Operacional",
                             "Não reportado",
-                            help="A empresa não reportou fluxo de caixa operacional em nenhum ano disponível na base."
+                            help="A empresa não reportou Fluxo de Caixa Operacional em nenhum ano da base."
+                        )
+                    elif ano_caixa == ano_selecionado:
+                        st.metric("Caixa Operacional", formatar_moeda_brasil_correta(val_caixa))
+                    else:
+                        st.metric(
+                            "Caixa Operacional",
+                            formatar_moeda_brasil_correta(val_caixa),
+                            delta=f"📅 Reportado em {ano_caixa}",
+                            delta_color="off"
                         )
 
                 if not is_bank:
@@ -1046,7 +1043,7 @@ elif modo_analise == "📈 Visão por Empresa":
                             st.write(f"LE1: {formatar_moeda_brasil_correta(le1)}")
                             st.write(f"LE2: {formatar_moeda_brasil_correta(le2)}")
                     else:
-                        st.info("Dados de Lucro Econômico não disponíveis.")
+                        st.info("ℹ️ Lucro Econômico não reportado para este ano (dados insuficientes).")
                     st.subheader("🔍 Análise de Alavancagem")
                     if pd.notna(df_filtrado["Alavancagem Eficaz"].iloc[0]):
                         if df_filtrado["Alavancagem Eficaz"].iloc[0]:
@@ -1064,7 +1061,7 @@ elif modo_analise == "📈 Visão por Empresa":
                     for c in cols:
                         if c in df_filtrado.columns:
                             val = df_filtrado[c].iloc[0]
-                            data.append({"Indicador": c, "Valor": formatar_percentual_brasil(val, 2) if pd.notna(val) else "N/A"})
+                            data.append({"Indicador": c, "Valor": formatar_percentual_brasil(val, 2) if pd.notna(val) else "Não reportado"})
                     st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True)
 
                 with sub_tabs[1]:
@@ -1149,9 +1146,9 @@ elif modo_analise == "📈 Visão por Empresa":
                                     col1, col2, col3, col4 = st.columns(4)
                                     col1.metric("Valor da Empresa (EV)", formatar_moeda_brasil_correta(val_emp_reais / 1000))
                                     col2.metric("Valor da Empresa", formatar_moeda_brasil_correta(val_emp_reais / 1000))
-                                    col3.metric("Nº de Ações", formatar_numero_brasil_correto(num_acoes, 0) if num_acoes else "N/A",
+                                    col3.metric("Nº de Ações", formatar_numero_brasil_correto(num_acoes, 0) if num_acoes else "Não reportado",
                                                 help="Número de ações obtido do Yahoo Finance (atual).")
-                                    col4.metric("Cotação Esperada", f"R$ {cotacao_esp:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if cotacao_esp else "N/A")
+                                    col4.metric("Cotação Esperada", f"R$ {cotacao_esp:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if cotacao_esp else "Não reportado")
                                     st.info(f"""
                                     **Fórmula:** Valor da Empresa = Lucro Econômico ÷ (SELIC/100)
                                     = {formatar_moeda_brasil_correta(le)} / ({selic}%/100) = {formatar_moeda_brasil_correta(val_emp)}
@@ -1174,9 +1171,9 @@ elif modo_analise == "📈 Visão por Empresa":
                                         else:
                                             st.info("🟡 Valuation próximo")
                             else:
-                                st.warning("Dados de Lucro Econômico não disponíveis.")
+                                st.info("ℹ️ Lucro Econômico não reportado (ou ≤ 0) para este ano.")
                         else:
-                            st.warning("Dados de EBITDA não disponíveis.")
+                            st.info("ℹ️ EBITDA não reportado para este ano (dados insuficientes).")
 
                 with sub_tabs[2]:
                     if is_bank:
@@ -1188,9 +1185,9 @@ elif modo_analise == "📈 Visão por Empresa":
                         for c in cols:
                             if c in df_filtrado.columns:
                                 val = df_filtrado[c].iloc[0]
-                                data.append({"Indicador": c, "Valor": formatar_percentual_brasil(val, 2) if pd.notna(val) else "N/A"})
+                                data.append({"Indicador": c, "Valor": formatar_percentual_brasil(val, 2) if pd.notna(val) else "Não reportado"})
                         st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True)
-                        if len(data) == 2 and all(d["Valor"] != "N/A" for d in data):
+                        if len(data) == 2 and all(d["Valor"] != "Não reportado" for d in data):
                             valores = [df_filtrado["Percentual Capital Terceiros"].iloc[0], df_filtrado["Percentual Capital Próprio"].iloc[0]]
                             fig = px.pie(values=valores, names=["Capital Terceiros", "Capital Próprio"], title="Composição do Capital")
                             st.plotly_chart(fig, use_container_width=True)
@@ -1205,7 +1202,7 @@ elif modo_analise == "📈 Visão por Empresa":
                         for c in cols:
                             if c in df_filtrado.columns:
                                 val = df_filtrado[c].iloc[0]
-                                data.append({"Indicador": c, "Valor": formatar_percentual_brasil(val, 2) if pd.notna(val) else "N/A"})
+                                data.append({"Indicador": c, "Valor": formatar_percentual_brasil(val, 2) if pd.notna(val) else "Não reportado"})
                         st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True)
 
                 with sub_tabs[4]:
@@ -1218,26 +1215,19 @@ elif modo_analise == "📈 Visão por Empresa":
                         for c in cols:
                             if c in df_filtrado.columns:
                                 val = df_filtrado[c].iloc[0]
-                                data.append({"Indicador": c, "Valor": formatar_moeda_brasil_correta(val) if pd.notna(val) else "N/A"})
+                                data.append({"Indicador": c, "Valor": formatar_moeda_brasil_correta(val) if pd.notna(val) else "Não reportado"})
                         st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True)
 
                 with sub_tabs[5]:
                     st.subheader("💵 Fluxo de Caixa Operacional")
-                    # ============================================================
-                    # ✅ AJUSTE: usa o fallback também na sub-aba Fluxo de Caixa
-                    # ============================================================
-                    val_caixa, col_caixa, ano_caixa = buscar_caixa_operacional_fallback(df_empresa_todos_anos, ano_selecionado)
-                    if val_caixa is not None:
+                    # ✅ Mesmo tratamento do card principal: mostra valor com selo do ano
+                    val_caixa, _, ano_caixa = buscar_caixa_operacional_fallback(df_empresa_todos_anos, ano_selecionado)
+                    if val_caixa is None:
+                        st.metric(f"Caixa Operacional ({ano_selecionado})", "Não reportado")
+                        st.info("ℹ️ A empresa **não reportou** Fluxo de Caixa Operacional em nenhum ano da base de dados.")
+                    elif ano_caixa == ano_selecionado:
                         col1, col2, col3 = st.columns(3)
-                        if ano_caixa == ano_selecionado:
-                            col1.metric("Caixa Operacional", formatar_moeda_brasil_correta(val_caixa))
-                        else:
-                            col1.metric(
-                                "Caixa Operacional",
-                                formatar_moeda_brasil_correta(val_caixa),
-                                delta=f"📅 Ref. {ano_caixa}",
-                                delta_color="off"
-                            )
+                        col1.metric("Caixa Operacional", formatar_moeda_brasil_correta(val_caixa))
                         lucro = df_filtrado["Lucro/Prejuízo Consolidado do Período"].iloc[0] if (not df_filtrado.empty and pd.notna(df_filtrado["Lucro/Prejuízo Consolidado do Período"].iloc[0])) else 0
                         if lucro != 0:
                             col2.metric("Caixa/Lucro", f"{(val_caixa / lucro) * 100:.1f}%")
@@ -1245,11 +1235,24 @@ elif modo_analise == "📈 Visão por Empresa":
                             ebitda = df_filtrado["EBITDA"].iloc[0] if ("EBITDA" in df_filtrado.columns and not df_filtrado.empty and pd.notna(df_filtrado["EBITDA"].iloc[0])) else 0
                             if ebitda != 0:
                                 col3.metric("Caixa/EBITDA", f"{(val_caixa / ebitda) * 100:.1f}%")
-                        if ano_caixa != ano_selecionado:
-                            st.info(f"ℹ️ O valor exibido refere-se ao ano de **{ano_caixa}**, pois não há dados de Caixa Operacional disponíveis para **{ano_selecionado}**.")
                         st.success("✅ Geração Positiva" if val_caixa > 0 else "⚠️ Geração Negativa")
                     else:
-                        st.info("ℹ️ A empresa não reportou dados de Fluxo de Caixa Operacional em nenhum ano da base.")
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric(
+                            "Caixa Operacional",
+                            formatar_moeda_brasil_correta(val_caixa),
+                            delta=f"📅 Reportado em {ano_caixa}",
+                            delta_color="off"
+                        )
+                        lucro = df_filtrado["Lucro/Prejuízo Consolidado do Período"].iloc[0] if (not df_filtrado.empty and pd.notna(df_filtrado["Lucro/Prejuízo Consolidado do Período"].iloc[0])) else 0
+                        if lucro != 0:
+                            col2.metric("Caixa/Lucro", f"{(val_caixa / lucro) * 100:.1f}%", help=f"Usa FCO reportado em {ano_caixa}.")
+                        if not is_bank:
+                            ebitda = df_filtrado["EBITDA"].iloc[0] if ("EBITDA" in df_filtrado.columns and not df_filtrado.empty and pd.notna(df_filtrado["EBITDA"].iloc[0])) else 0
+                            if ebitda != 0:
+                                col3.metric("Caixa/EBITDA", f"{(val_caixa / ebitda) * 100:.1f}%", help=f"Usa FCO reportado em {ano_caixa}.")
+                        st.info(f"ℹ️ **FCO não reportado em {ano_selecionado}.** Exibindo valor reportado em **{ano_caixa}**. " +
+                                ("Geração Positiva ✅" if val_caixa > 0 else "Geração Negativa ⚠️"))
 
                 with sub_tabs[6]:
                     st.subheader("Dados Brutos")
@@ -1265,7 +1268,7 @@ elif modo_analise == "📈 Visão por Empresa":
                     for c in cols:
                         if c in df_filtrado.columns:
                             val = df_filtrado[c].iloc[0]
-                            data[c] = formatar_moeda_brasil_correta(val) if pd.notna(val) else "N/A"
+                            data[c] = formatar_moeda_brasil_correta(val) if pd.notna(val) else "Não reportado"
                     st.dataframe(pd.DataFrame.from_dict(data, orient='index', columns=['Valor']), use_container_width=True)
 
         with tab_evolucao:
@@ -1384,9 +1387,9 @@ elif modo_analise == "📈 Visão por Empresa":
                 for c in df_resumo.columns:
                     if c != 'Ano':
                         if c in ['ROE','ROA','ROI','Margem Líquida','wacc','Percentual Capital Próprio','Margem Bruta','Margem Operacional']:
-                            df_resumo[c] = df_resumo[c].apply(lambda x: formatar_percentual_brasil(x, 2) if pd.notna(x) else 'N/A')
+                            df_resumo[c] = df_resumo[c].apply(lambda x: formatar_percentual_brasil(x, 2) if pd.notna(x) else 'Não reportado')
                         else:
-                            df_resumo[c] = df_resumo[c].apply(lambda x: formatar_moeda_brasil_correta(x) if pd.notna(x) else 'N/A')
+                            df_resumo[c] = df_resumo[c].apply(lambda x: formatar_moeda_brasil_correta(x) if pd.notna(x) else 'Não reportado')
                 st.dataframe(df_resumo, use_container_width=True)
             else:
                 st.info("São necessários dados de múltiplos anos.")
@@ -1412,7 +1415,7 @@ elif modo_analise == "📈 Visão por Empresa":
                     if not div_12m.empty:
                         total_12m = div_12m['Dividendo'].sum()
                         dy = (total_12m / cotacao['cotacao']) * 100
-                col4.metric("Dividend Yield (12M)", formatar_percentual_brasil(dy/100) if dy is not None else "N/A")
+                col4.metric("Dividend Yield (12M)", formatar_percentual_brasil(dy/100) if dy is not None else "Não reportado")
                 
                 st.markdown("---")
                 df_anual = df_div_yahoo.groupby('Ano')['Dividendo'].sum().reset_index()
@@ -1448,7 +1451,7 @@ elif modo_analise == "📈 Visão por Empresa":
                         st.subheader("📋 Detalhamento Anual")
                         display = df_empresa_div[['Ano', 'Total Pago (R$)']].copy()
                         display['Total Pago (R$)'] = display['Total Pago (R$)'].apply(
-                            lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(x) else "N/A"
+                            lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(x) else "Não reportado"
                         )
                         st.dataframe(display, use_container_width=True)
                         
@@ -1463,9 +1466,9 @@ elif modo_analise == "📈 Visão por Empresa":
                         if ultimo_total and ultimo_total > 0:
                             st.metric(f"Total Pago no último ano ({ultimo_ano})", f"R$ {ultimo_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                     else:
-                        st.warning("Não há dados de pagamento de dividendos/JCP nas demonstrações financeiras para esta empresa.")
+                        st.info("ℹ️ Não há dados de pagamento de dividendos/JCP nas demonstrações financeiras desta empresa.")
                 else:
-                    st.warning("Coluna 'Pagamento de Dividendos' não encontrada no arquivo de dados.")
+                    st.info("ℹ️ Coluna 'Pagamento de Dividendos' não encontrada no arquivo de dados.")
 
         with tab_simulacao:
             st.subheader("💵 Simulação de Investimento por Lotes")
@@ -1594,9 +1597,9 @@ elif modo_analise == "🏭 Análise Setorial":
                     for c in df_evol.columns:
                         if c != 'Ano':
                             if c in ['ROE','ROA','ROI','Margem Líquida','wacc','Percentual Capital Próprio','Margem Bruta','Margem Operacional']:
-                                df_evol[c] = df_evol[c].apply(lambda x: formatar_percentual_brasil(x, 2) if pd.notna(x) else 'N/A')
+                                df_evol[c] = df_evol[c].apply(lambda x: formatar_percentual_brasil(x, 2) if pd.notna(x) else 'Não reportado')
                             else:
-                                df_evol[c] = df_evol[c].apply(lambda x: formatar_moeda_brasil_correta(x) if pd.notna(x) else 'N/A')
+                                df_evol[c] = df_evol[c].apply(lambda x: formatar_moeda_brasil_correta(x) if pd.notna(x) else 'Não reportado')
                     st.dataframe(df_evol, use_container_width=True)
                     if ano_selecionado in df_setor_todos_anos['Ano'].values:
                         df_ano = df_setor_todos_anos[df_setor_todos_anos['Ano'] == ano_selecionado]
