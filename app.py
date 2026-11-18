@@ -21,10 +21,12 @@ import re
 import appdirs as ad
 from pathlib import Path
 from curl_cffi import requests as curl_requests
+import tempfile  # 🔧 AJUSTE: usar tmpdir em vez de ".cache"
 
-CACHE_DIR = ".cache"
+# 🔧 AJUSTE: diretório de cache gravável em qualquer ambiente (Streamlit Cloud / Colab / local)
+CACHE_DIR = os.path.join(tempfile.gettempdir(), "yf_cache")
 ad.user_cache_dir = lambda *args: CACHE_DIR
-Path(CACHE_DIR).mkdir(exist_ok=True)
+Path(CACHE_DIR).mkdir(parents=True, exist_ok=True)
 # ==============================
 
 # ==============================
@@ -113,17 +115,20 @@ def formatar_dataframe_percentual(df, colunas):
 # ==============================
 # FUNÇÃO PARA DESCOBRIR O TICKER CORRETO NO YAHOO
 # ==============================
-@st.cache_data(ttl=86400)
-def obter_ticker_yahoo(ticker_base):
+# 🔧 AJUSTE: separado em interno (cacheado) + wrapper externo.
+# O interno levanta exceção quando não acha nenhum sufixo válido,
+# evitando cachear o "chute" {base}.SA por 24h. TTL caiu para 1h.
+@st.cache_data(ttl=3600)
+def _obter_ticker_yahoo_interno(ticker_base):
     ticker_base = str(ticker_base).strip().upper()
-    
+
     if re.search(r'\d+$', ticker_base):
         return f"{ticker_base}.SA"
-        
+
     base = re.sub(r'\d+$', '', ticker_base).upper()
     sufixos = ['3', '4', '5', '6', '11']
     session = curl_requests.Session(impersonate="chrome")
-    
+
     for suf in sufixos:
         ticker_yf = f"{base}{suf}.SA"
         try:
@@ -131,46 +136,102 @@ def obter_ticker_yahoo(ticker_base):
             hist = acao.history(period="5d")
             if not hist.empty:
                 return ticker_yf
-        except:
+        except Exception:
             pass
-            
-    return f"{base}.SA"
+
+    raise RuntimeError(f"Ticker não encontrado para {ticker_base}")
+
+def obter_ticker_yahoo(ticker_base):
+    try:
+        return _obter_ticker_yahoo_interno(ticker_base)
+    except Exception:
+        base = re.sub(r'\d+$', '', str(ticker_base).strip().upper())
+        return f"{base}.SA"
 
 # ==============================
 # FUNÇÕES DE MERCADO E DIVIDENDOS (com cache, curl_cffi e horário de Brasília)
 # ==============================
-@st.cache_data(ttl=86400)
+# 🔧 AJUSTE PRINCIPAL: busca de cotação com 3 camadas (fast_info → .info → history)
+# e SEM cachear falhas (levanta exceção interna; wrapper externo devolve None).
+def _buscar_cotacao_interna(ticker):
+    ticker_yf = obter_ticker_yahoo(ticker)
+    session = curl_requests.Session(impersonate="chrome")
+    acao = yf.Ticker(ticker_yf, session=session)
+
+    cotacao = None
+    info = {}
+
+    # 1) fast_info (endpoint leve e mais estável em IPs de datacenter)
+    try:
+        fi = acao.fast_info
+        for chave in ("last_price", "lastPrice", "regular_market_price", "regularMarketPrice"):
+            try:
+                v = fi.get(chave) if hasattr(fi, "get") else getattr(fi, chave, None)
+            except Exception:
+                v = None
+            if v and float(v) > 0:
+                cotacao = float(v)
+                break
+    except Exception:
+        pass
+
+    # 2) .info (endpoint completo, mas instável no Yahoo)
+    try:
+        info = acao.info or {}
+    except Exception:
+        info = {}
+
+    if not cotacao or cotacao <= 0:
+        for chave in ("regularMarketPrice", "currentPrice",
+                      "regularMarketPreviousClose", "previousClose"):
+            v = info.get(chave)
+            if v and float(v) > 0:
+                cotacao = float(v)
+                break
+
+    # 3) Fallback final: último fechamento em history
+    if not cotacao or cotacao <= 0:
+        try:
+            hist = acao.history(period="5d")
+            if not hist.empty:
+                fechamentos = hist["Close"].dropna()
+                if not fechamentos.empty:
+                    ultimo = float(fechamentos.iloc[-1])
+                    if ultimo > 0:
+                        cotacao = ultimo
+        except Exception:
+            pass
+
+    if not cotacao or cotacao <= 0:
+        # Importante: NÃO retornar None aqui — isso faria o st.cache_data
+        # cachear a falha por todo o TTL. Levantando exceção, o cache é pulado.
+        raise RuntimeError(f"Sem cotação para {ticker} ({ticker_yf})")
+
+    return {
+        'cotacao': cotacao,
+        'mercado_aberto': bolsa_aberta_agora(),
+        'moeda': info.get('currency', 'BRL'),
+        'nome': info.get('longName', ticker),
+        'setor': info.get('sector', 'N/A'),
+        'industria': info.get('industry', 'N/A'),
+        'market_cap': info.get('marketCap'),
+        'sharesOutstanding': info.get('sharesOutstanding'),
+        'volume': info.get('volume'),
+        'data_atualizacao': agora_brasil().strftime("%d/%m/%Y %H:%M")
+    }
+
+@st.cache_data(ttl=900)
+def _buscar_cotacao_cached(ticker):
+    return _buscar_cotacao_interna(ticker)
+
 def buscar_cotacao_atual(ticker):
     try:
-        ticker_yf = obter_ticker_yahoo(ticker)
-        session = curl_requests.Session(impersonate="chrome")
-        acao = yf.Ticker(ticker_yf, session=session)
-        info = acao.info
-        cotacao = info.get('regularMarketPrice') or info.get('currentPrice')
-        if not cotacao or cotacao <= 0:
-            cotacao = (
-                info.get('regularMarketPreviousClose')
-                or info.get('previousClose')
-                or info.get('regularMarketPrice')
-            )
-        if cotacao and cotacao > 0:
-            return {
-                'cotacao': cotacao,
-                'mercado_aberto': bolsa_aberta_agora(),
-                'moeda': info.get('currency', 'BRL'),
-                'nome': info.get('longName', ticker),
-                'setor': info.get('sector', 'N/A'),
-                'industria': info.get('industry', 'N/A'),
-                'market_cap': info.get('marketCap'),
-                'sharesOutstanding': info.get('sharesOutstanding'),
-                'volume': info.get('volume'),
-                'data_atualizacao': agora_brasil().strftime("%d/%m/%Y %H:%M")
-            }
-    except:
-        pass
-    return None
+        return _buscar_cotacao_cached(ticker)
+    except Exception:
+        return None
 
-@st.cache_data(ttl=86400)
+# 🔧 AJUSTE: TTL 86400 → 3600 (evita travar falha por 24h)
+@st.cache_data(ttl=3600)
 def buscar_dividendos_historicos(ticker):
     try:
         ticker_yf = obter_ticker_yahoo(ticker)
@@ -190,7 +251,8 @@ def buscar_dividendos_historicos(ticker):
     except:
         return None
 
-@st.cache_data(ttl=86400)
+# 🔧 AJUSTE: TTL 86400 → 3600 (evita travar falha por 24h)
+@st.cache_data(ttl=3600)
 def buscar_historico_precos(ticker, periodo_maximo="max"):
     try:
         ticker_yf = obter_ticker_yahoo(ticker)
@@ -1008,11 +1070,6 @@ elif modo_analise == "📈 Visão por Empresa":
                     else:
                         st.metric("WACC", "N/A (Banco)")
                 with col5:
-                    # ============================================================
-                    # ✅ AJUSTE: card principal mostra "Não reportado" quando
-                    #    o ano selecionado não tem FCO (igual aos demais indicadores).
-                    #    O valor de outro ano aparece ABAIXO, como observação (caption).
-                    # ============================================================
                     val_caixa, _, ano_caixa = buscar_caixa_operacional_fallback(df_empresa_todos_anos, ano_selecionado)
                     if val_caixa is None:
                         st.metric(
@@ -1219,11 +1276,6 @@ elif modo_analise == "📈 Visão por Empresa":
 
                 with sub_tabs[5]:
                     st.subheader("💵 Fluxo de Caixa Operacional")
-                    # ============================================================
-                    # ✅ AJUSTE: mesma lógica do card principal — valor principal
-                    #    é "Não reportado" quando não há dado no ano selecionado;
-                    #    o valor de outro ano aparece como observação abaixo.
-                    # ============================================================
                     val_caixa, _, ano_caixa = buscar_caixa_operacional_fallback(df_empresa_todos_anos, ano_selecionado)
                     if val_caixa is None:
                         st.metric(f"Caixa Operacional ({ano_selecionado})", "Não reportado")
@@ -1240,7 +1292,6 @@ elif modo_analise == "📈 Visão por Empresa":
                                 col3.metric("Caixa/EBITDA", f"{(val_caixa / ebitda) * 100:.1f}%")
                         st.success("✅ Geração Positiva" if val_caixa > 0 else "⚠️ Geração Negativa")
                     else:
-                        # Valor principal = "Não reportado"; valor de outro ano vai como observação
                         col1, col2, col3 = st.columns(3)
                         col1.metric(f"Caixa Operacional ({ano_selecionado})", "Não reportado")
                         st.caption(f"📅 Reportado em {ano_caixa}: **{formatar_moeda_brasil_correta(val_caixa)}**")
@@ -1461,159 +1512,4 @@ elif modo_analise == "📈 Visão por Empresa":
                         col1.metric("Total Pago (período)", f"R$ {total_pago:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                         col2.metric("Média Anual (Total)", f"R$ {media_anual:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
                         
-                        ultimo_ano = df_empresa_div['Ano'].max()
-                        ultimo_total = df_empresa_div[df_empresa_div['Ano'] == ultimo_ano]['Total Pago (R$)'].iloc[0] if not df_empresa_div.empty else None
-                        if ultimo_total and ultimo_total > 0:
-                            st.metric(f"Total Pago no último ano ({ultimo_ano})", f"R$ {ultimo_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                    else:
-                        st.info("ℹ️ Não há dados de pagamento de dividendos/JCP nas demonstrações financeiras desta empresa.")
-                else:
-                    st.info("ℹ️ Coluna 'Pagamento de Dividendos' não encontrada no arquivo de dados.")
-
-        with tab_simulacao:
-            st.subheader("💵 Simulação de Investimento por Lotes")
-            col_data, col_lote = st.columns(2)
-            with col_data:
-                data_compra = st.date_input("Data da compra", value=datetime(2015,1,1).date(),
-                                            min_value=datetime(2000,1,1).date(),
-                                            max_value=agora_brasil().date() - timedelta(days=365))
-            with col_lote:
-                lote = st.selectbox("Tamanho do lote:", [100, 1000, 10000], index=0, format_func=lambda x: f"{x} ações")
-            if st.button("Executar Simulação"):
-                res = simular_investimento_lotes(ticker_selecionado, data_compra, lote)
-                if res and 'error' in res:
-                    st.error(f"❌ {res['message']}")
-                elif res:
-                    if res.get('sem_dividendos', False):
-                        st.warning("⚠️ Nenhum provento registrado no período. O ganho reflete apenas valorização.")
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("Valor Investido", f"R$ {res['valor_investido']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), help=f"Preço compra: R$ {res['preco_compra']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                    col2.metric("Valor Atual", f"R$ {res['valor_investido_atual']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), help=f"Preço atual: R$ {res['preco_atual']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                    col3.metric("Total Dividendos", f"R$ {res['total_dividendos_recebidos']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                    col4.metric("Ganho Total", f"R$ {res['ganho_total']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta=f"Rentabilidade: {res['rentabilidade_total_percentual']:,.2f}%".replace(".", ","))
-                    st.markdown("---")
-                    col_rent1, col_rent2, col_rent3 = st.columns(3)
-                    col_rent1.metric("Apreciação", f"{res['rentabilidade_preco_percentual']:,.2f}%".replace(".", ","))
-                    col_rent2.metric("Dividendos", f"{res['rentabilidade_dividendos_percentual']:,.2f}%".replace(".", ","))
-                    col_rent3.metric("Total", f"{res['rentabilidade_total_percentual']:,.2f}%".replace(".", ","))
-                else:
-                    st.error("❌ Não foi possível realizar a simulação. Dados de preço não encontrados para o período.")
-
-    else:
-        st.warning("Empresa não encontrada na base de dados.")
-
-# ==============================
-# MODO: ANÁLISE SETORIAL
-# ==============================
-elif modo_analise == "🏭 Análise Setorial":
-    st.header(f"🏭 Análise Setorial - {setor_selecionado}")
-    if not df_setor_todos_anos.empty:
-        tab_atual, tab_evol = st.tabs(["📊 Análise do Ano", "📈 Evolução Temporal"])
-        with tab_atual:
-            st.subheader(f"Ano {ano_selecionado}")
-            if not df_filtrado.empty:
-                is_bank_setor = setor_selecionado.lower() in ['bancos', 'instituição financeira', 'financeiro']
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Empresas", df_filtrado["Ticker"].nunique())
-                col2.metric("Receita Total", formatar_moeda_brasil_correta(df_filtrado["Receita de Venda de Bens e/ou Serviços"].sum(), 2))
-                col3.metric("Lucro Total", formatar_moeda_brasil_correta(df_filtrado["Lucro/Prejuízo Consolidado do Período"].sum(), 2))
-                col4.metric("PL Total", formatar_moeda_brasil_correta(df_filtrado["Patrimônio Líquido Consolidado"].sum(), 2))
-                st.divider()
-                st.subheader("Top 10 ROE")
-                top = df_filtrado[df_filtrado["ROE"].notna()].nlargest(10, "ROE")[["Ticker", "ROE"]]
-                if not top.empty:
-                    fig = px.bar(top, x="Ticker", y="ROE", title="ROE no Setor")
-                    fig.update_layout(yaxis_tickformat=',.2%')
-                    st.plotly_chart(fig, use_container_width=True)
-                if not is_bank_setor:
-                    st.subheader("Estrutura de Capital")
-                    df_est = df_filtrado[df_filtrado["Percentual Capital Próprio"].notna()].nlargest(15, "Patrimônio Líquido Consolidado")
-                    if not df_est.empty:
-                        fig = px.bar(df_est, x="Ticker", y=["Percentual Capital Terceiros", "Percentual Capital Próprio"],
-                                     title="Estrutura de Capital", barmode='stack')
-                        fig.update_layout(yaxis_tickformat=',.2%')
-                        st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("Estrutura de capital não se aplica a bancos.")
-                st.subheader("Ranking de Rentabilidade")
-                cols = ["Ticker", "ROE", "ROA", "ROI", "Margem Líquida"] if not is_bank_setor else ["Ticker", "ROE", "ROA"]
-                df_rank = df_filtrado[df_filtrado["ROE"].notna() & df_filtrado["ROA"].notna()].nlargest(15, "ROE")[cols]
-                if not df_rank.empty:
-                    fmt_cols = [c for c in cols if c in ['ROE','ROA','ROI','Margem Líquida']]
-                    st.dataframe(formatar_dataframe_percentual(df_rank, fmt_cols), use_container_width=True)
-            else:
-                st.warning(f"Não há dados para {setor_selecionado} em {ano_selecionado}.")
-
-        with tab_evol:
-            st.subheader("Evolução Temporal do Setor")
-            if len(df_setor_todos_anos['Ano'].unique()) > 1:
-                is_bank_setor = setor_selecionado.lower() in ['bancos', 'instituição financeira', 'financeiro']
-                candidatos = ['ROE','ROA','ROI','Margem Líquida','wacc','Percentual Capital Próprio','Lucro Econômico 1','EBITDA'] if not is_bank_setor else ['ROE','ROA','Margem Bruta','Margem Operacional','Resultado Abrangente do Período','PL Médio']
-                indicadores = [c for c in candidatos if c in df_setor_todos_anos.columns]
-                if not indicadores:
-                    st.warning("Nenhum indicador disponível para evolução.")
-                else:
-                    df_evol = df_setor_todos_anos.groupby('Ano')[indicadores].median().reset_index()
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        fig = go.Figure()
-                        rent = ['ROE','ROA','ROI'] if not is_bank_setor else ['ROE','ROA']
-                        for i, ind in enumerate(rent):
-                            if ind in df_evol.columns:
-                                d = df_evol[df_evol[ind].notna()]
-                                if not d.empty:
-                                    fig.add_trace(go.Scatter(x=d['Ano'], y=d[ind], mode='lines+markers', name=ind,
-                                                             line=dict(color=['#1f77b4','#ff7f0e','#2ca02c'][i], width=3)))
-                        fig.update_layout(title='Rentabilidade (Mediana)', yaxis_tickformat=',.2%', height=400)
-                        st.plotly_chart(fig, use_container_width=True)
-                    with col2:
-                        if not is_bank_setor:
-                            fig = go.Figure()
-                            for ind in ['Percentual Capital Próprio', 'wacc']:
-                                if ind in df_evol.columns:
-                                    d = df_evol[df_evol[ind].notna()]
-                                    if not d.empty:
-                                        fig.add_trace(go.Scatter(x=d['Ano'], y=d[ind], mode='lines+markers', name=ind,
-                                                                 line=dict(color=['#2ecc71','#f39c12'][0 if ind=='Percentual Capital Próprio' else 1], width=3)))
-                            fig.update_layout(title='Estrutura e Custo (Mediana)', yaxis_tickformat=',.2%', height=400)
-                            st.plotly_chart(fig, use_container_width=True)
-                        else:
-                            if 'PL Médio' in df_evol.columns:
-                                fig = px.line(df_evol, x='Ano', y='PL Médio', title='PL Médio (Mediana)')
-                                fig.update_layout(yaxis_tickformat=',.0f')
-                                st.plotly_chart(fig, use_container_width=True)
-                    if not is_bank_setor and 'Lucro Econômico 1' in df_evol.columns and 'EBITDA' in df_evol.columns:
-                        st.subheader("Lucro Econômico e EBITDA")
-                        col3, col4 = st.columns(2)
-                        with col3:
-                            fig = px.line(df_evol, x='Ano', y='Lucro Econômico 1', title='Lucro Econômico (Mediana)')
-                            fig.update_layout(yaxis_tickformat=',.0f')
-                            st.plotly_chart(fig, use_container_width=True)
-                        with col4:
-                            fig = px.line(df_evol, x='Ano', y='EBITDA', title='EBITDA (Mediana)')
-                            fig.update_layout(yaxis_tickformat=',.0f')
-                            st.plotly_chart(fig, use_container_width=True)
-                    st.subheader("Resumo da Evolução")
-                    for c in df_evol.columns:
-                        if c != 'Ano':
-                            if c in ['ROE','ROA','ROI','Margem Líquida','wacc','Percentual Capital Próprio','Margem Bruta','Margem Operacional']:
-                                df_evol[c] = df_evol[c].apply(lambda x: formatar_percentual_brasil(x, 2) if pd.notna(x) else 'Não reportado')
-                            else:
-                                df_evol[c] = df_evol[c].apply(lambda x: formatar_moeda_brasil_correta(x) if pd.notna(x) else 'Não reportado')
-                    st.dataframe(df_evol, use_container_width=True)
-                    if ano_selecionado in df_setor_todos_anos['Ano'].values:
-                        df_ano = df_setor_todos_anos[df_setor_todos_anos['Ano'] == ano_selecionado]
-                        if not df_ano.empty and 'ROE' in df_ano.columns:
-                            fig = px.box(df_ano, y='ROE', title=f'Distribuição do ROE no Setor - {ano_selecionado}')
-                            fig.update_layout(yaxis_tickformat=',.2%')
-                            st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("São necessários dados de múltiplos anos.")
-
-# ==============================
-# RODAPÉ
-# ==============================
-st.divider()
-st.caption(f"📊 Dados atualizados para {ano_selecionado} | Total de empresas: {df['Ticker'].nunique()}")
-st.sidebar.divider()
-st.sidebar.info("Dashboard baseado em dados da CVM até 2025. Suporte a bancos, dividendos e simulações.")
+                        ultimo
